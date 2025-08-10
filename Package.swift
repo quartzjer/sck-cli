@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "sck-cli",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v15)
     ],
     products: [
         .executable(name: "sck-cli", targets: ["sck-cli"]) 
@@ -22,7 +22,8 @@ let package = Package(
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("CoreMedia"),
-                .linkedFramework("AppKit")
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation")
             ]
         )
     ]
