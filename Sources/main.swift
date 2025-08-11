@@ -7,6 +7,8 @@ import CoreMedia
 import CoreVideo
 import Dispatch
 import AVFoundation
+import ArgumentParser
+import Darwin
 
 final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
     let sema = DispatchSemaphore(value: 0)
@@ -132,15 +134,18 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
 
 @MainActor
 @main
-struct SCKShot {
+struct SCKShot: AsyncParsableCommand {
+    @Flag(name: .long, help: "Record microphone instead of system audio")
+    var mic = false
+    
     // Keep strong reference to output to prevent garbage collection
     static var streamOutput: Output?
     
-    static func main() async {
+    func run() async throws {
         // 1) Discover displays
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               let display = content.displays.first else {
-            fputs("No displays found\n", stderr); exit(1)
+            fputs("No displays found\n", stderr); Darwin.exit(1)
         }
 
         // 2) Build a content filter for the chosen display
@@ -151,39 +156,51 @@ struct SCKShot {
         cfg.width  = display.width
         cfg.height = display.height
         cfg.pixelFormat = kCVPixelFormatType_32BGRA
-        cfg.capturesAudio = true  // Capture system audio
         cfg.sampleRate = 48_000
         cfg.channelCount = 2
         
-        // For macOS 15.0+, also enable microphone capture
-        // Note: Disabled due to potential audio format conflicts when mixing sources
-        // if #available(macOS 15.0, *) {
-        //     cfg.captureMicrophone = true
-        //     cfg.microphoneCaptureDeviceID = nil  // nil uses default microphone
-        // }
+        if mic {
+            // Record microphone only
+            cfg.capturesAudio = false
+            if #available(macOS 15.0, *) {
+                cfg.captureMicrophone = true
+                cfg.microphoneCaptureDeviceID = nil  // nil uses default microphone
+            }
+        } else {
+            // Record system audio only (default behavior)
+            cfg.capturesAudio = true
+        }
 
         // 4) Create stream and a frame/audio receiver
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
 
         let out = Output()
-        streamOutput = out  // Keep strong reference to prevent garbage collection
+        SCKShot.streamOutput = out  // Keep strong reference to prevent garbage collection
         
         try! stream.addStreamOutput(out, type: .screen, sampleHandlerQueue: .main)
-        try! stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
         
-        // Add microphone output for macOS 15.0+ (disabled due to format conflicts)
-        // if #available(macOS 15.0, *) {
-        //     do {
-        //         try stream.addStreamOutput(out, type: .microphone, sampleHandlerQueue: .main)
-        //         print("Microphone capture enabled")
-        //     } catch {
-        //         print("Could not enable microphone capture: \(error)")
-        //     }
-        // }
+        if mic {
+            // Add microphone output for macOS 15.0+
+            if #available(macOS 15.0, *) {
+                do {
+                    try stream.addStreamOutput(out, type: .microphone, sampleHandlerQueue: .main)
+                    print("Microphone capture enabled")
+                } catch {
+                    print("Could not enable microphone capture: \(error)")
+                    Darwin.exit(1)
+                }
+            } else {
+                print("Microphone capture requires macOS 15.0 or later")
+                Darwin.exit(1)
+            }
+        } else {
+            try! stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
+        }
 
         // 5) Start capture
         try? await stream.startCapture()
-        print("Started capture - recording 10 seconds of audio...")
+        let audioSource = mic ? "microphone" : "system audio"
+        print("Started capture - recording 10 seconds of \(audioSource)...")
 
         // Wait for 10 seconds of audio capture
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
@@ -194,6 +211,6 @@ struct SCKShot {
         }
 
         _ = try? await stream.stopCapture()
-        exit(0)
+        Darwin.exit(0)
     }
 }
