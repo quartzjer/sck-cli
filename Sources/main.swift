@@ -12,7 +12,11 @@ import Darwin
 
 final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
     let sema = DispatchSemaphore(value: 0)
-    var screenWritten = false
+    private var screenshotCount = 0
+    private var lastScreenshotTime: CFAbsoluteTime = 0
+    private var captureStartTime: CFAbsoluteTime = 0
+    private let screenshotInterval: CFAbsoluteTime = 1.0 // 1 second = 1Hz
+    private let captureDuration: Double = 10.0
     
     private let systemAudioWriter: AVAssetWriter
     private let systemAudioInput: AVAssetWriterInput
@@ -92,17 +96,38 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of outputType: SCStreamOutputType) {
         switch outputType {
         case .screen:
-            guard !screenWritten, let imgBuf = sb.imageBuffer else { return }
-            // Write PNG to disk (only once)
-            let ci = CIImage(cvImageBuffer: imgBuf)
-            let ctx = CIContext(options: nil)
-            let url = URL(fileURLWithPath: "capture.png")
-            if let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-               let data = ctx.pngRepresentation(of: ci, format: .BGRA8, colorSpace: colorSpace) {
-                try? data.write(to: url)
-                print("wrote \(url.path)")
+            guard let imgBuf = sb.imageBuffer else { return }
+            
+            let currentTime = CFAbsoluteTimeGetCurrent()
+            
+            // Initialize timing on first screenshot
+            if screenshotCount == 0 {
+                captureStartTime = currentTime
+                lastScreenshotTime = currentTime
             }
-            screenWritten = true
+            
+            // Stop capturing after 10 seconds
+            let totalElapsed = currentTime - captureStartTime
+            if totalElapsed >= captureDuration {
+                return
+            }
+            
+            // Capture screenshot at 1Hz interval
+            if screenshotCount == 0 || (currentTime - lastScreenshotTime) >= screenshotInterval {
+                
+                let ci = CIImage(cvImageBuffer: imgBuf)
+                let ctx = CIContext(options: nil)
+                let url = URL(fileURLWithPath: "capture_\(screenshotCount).png")
+                
+                if let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+                   let data = ctx.pngRepresentation(of: ci, format: .BGRA8, colorSpace: colorSpace) {
+                    try? data.write(to: url)
+                    print("wrote \(url.path)")
+                }
+                
+                screenshotCount += 1
+                lastScreenshotTime = currentTime
+            }
         case .audio:
             handleAudioBuffer(sb, isSystemAudio: true)
         case .microphone:
