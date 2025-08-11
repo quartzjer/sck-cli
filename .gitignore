@@ -9,3 +9,5 @@ DerivedData/
 *.png
 $PWD/
 .vscode/
+*.m4a
+*.flac
