@@ -33,7 +33,7 @@ struct SCKShot {
         // 4) Create stream and a frame/audio receiver
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
 
-        final class Output: NSObject, SCStreamOutput {
+        final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
             let sema = DispatchSemaphore(value: 0)
             var screenWritten = false
             var audioWritten = false
