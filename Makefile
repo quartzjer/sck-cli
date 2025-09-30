@@ -49,6 +49,13 @@ clean:
 	rm -rf $(BUILD_DIR)
 	@echo "Clean complete."
 
+# Clean captured output files
+.PHONY: clean-output
+clean-output:
+	@echo "Cleaning capture outputs..."
+	rm -f capture_*.png system_audio.m4a microphone.m4a
+	@echo "Output files cleaned."
+
 # Install to /usr/local/bin (requires sudo)
 .PHONY: install
 install: release
@@ -140,13 +147,14 @@ test: build
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  make build      - Build the project in debug mode (default)"
-	@echo "  make release    - Build the project in release mode"
-	@echo "  make run        - Build and run the tool"
-	@echo "  make run-debug  - Run the debug executable directly"
-	@echo "  make run-release - Run the release executable directly"
-	@echo "  make test       - Run the tool and verify outputs are valid"
-	@echo "  make clean      - Remove all build artifacts"
-	@echo "  make install    - Install to /usr/local/bin (may require sudo)"
-	@echo "  make uninstall  - Remove from /usr/local/bin"
-	@echo "  make help       - Show this help message"
+	@echo "  make build        - Build the project in debug mode (default)"
+	@echo "  make release      - Build the project in release mode"
+	@echo "  make run          - Build and run the tool"
+	@echo "  make run-debug    - Run the debug executable directly"
+	@echo "  make run-release  - Run the release executable directly"
+	@echo "  make test         - Run the tool and verify outputs are valid"
+	@echo "  make clean        - Remove all build artifacts"
+	@echo "  make clean-output - Remove captured screenshots and audio files"
+	@echo "  make install      - Install to /usr/local/bin (may require sudo)"
+	@echo "  make uninstall    - Remove from /usr/local/bin"
+	@echo "  make help         - Show this help message"
