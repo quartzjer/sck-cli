@@ -53,7 +53,7 @@ clean:
 .PHONY: clean-output
 clean-output:
 	@echo "Cleaning capture outputs..."
-	rm -f capture_*.png system_audio.m4a microphone.m4a
+	rm -f capture_*.png audio.m4a
 	@echo "Output files cleaned."
 
 # Install to /usr/local/bin (requires sudo)
@@ -76,7 +76,7 @@ uninstall:
 test: build
 	@echo "Testing $(EXECUTABLE)..."
 	@echo "Cleaning up any previous test outputs..."
-	@rm -f capture_*.png system_audio.m4a microphone.m4a
+	@rm -f capture_*.png audio.m4a
 	@echo "Running capture (this will take ~10 seconds)..."
 	@$(DEBUG_BUILD)
 	@echo ""
@@ -98,47 +98,36 @@ test: build
 		echo "❌ FAIL: capture_0.png is not a valid PNG file"; \
 		exit 1; \
 	fi
-	@# Check system audio file exists and is valid
-	@if [ ! -f system_audio.m4a ]; then \
-		echo "❌ FAIL: system_audio.m4a not found"; \
+	@# Check stereo audio file exists and is valid
+	@if [ ! -f audio.m4a ]; then \
+		echo "❌ FAIL: audio.m4a not found"; \
 		exit 1; \
 	fi
-	@if file system_audio.m4a | grep -q "ISO Media"; then \
-		echo "✓ system_audio.m4a exists and is valid M4A"; \
+	@if file audio.m4a | grep -q "ISO Media"; then \
+		echo "✓ audio.m4a exists and is valid M4A"; \
 	else \
-		echo "❌ FAIL: system_audio.m4a is not a valid M4A file"; \
+		echo "❌ FAIL: audio.m4a is not a valid M4A file"; \
 		exit 1; \
 	fi
-	@# Verify system audio duration is ~10 seconds (8-12 second range)
-	@SYSTEM_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 system_audio.m4a 2>/dev/null | cut -d. -f1); \
-	if [ -z "$$SYSTEM_DURATION" ]; then \
-		echo "⚠ WARNING: Could not determine system_audio.m4a duration (ffprobe not installed?)"; \
-	elif [ $$SYSTEM_DURATION -lt 8 ] || [ $$SYSTEM_DURATION -gt 12 ]; then \
-		echo "❌ FAIL: system_audio.m4a duration is $$SYSTEM_DURATION seconds (expected ~10)"; \
-		exit 1; \
-	else \
-		echo "✓ system_audio.m4a duration is $$SYSTEM_DURATION seconds"; \
-	fi
-	@# Check microphone file exists and is valid
-	@if [ ! -f microphone.m4a ]; then \
-		echo "❌ FAIL: microphone.m4a not found"; \
-		exit 1; \
-	fi
-	@if file microphone.m4a | grep -q "ISO Media"; then \
-		echo "✓ microphone.m4a exists and is valid M4A"; \
-	else \
-		echo "❌ FAIL: microphone.m4a is not a valid M4A file"; \
-		exit 1; \
-	fi
-	@# Verify microphone duration is ~10 seconds (8-12 second range)
-	@MIC_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 microphone.m4a 2>/dev/null | cut -d. -f1); \
-	if [ -z "$$MIC_DURATION" ]; then \
-		echo "⚠ WARNING: Could not determine microphone.m4a duration (ffprobe not installed?)"; \
-	elif [ $$MIC_DURATION -lt 8 ] || [ $$MIC_DURATION -gt 12 ]; then \
-		echo "❌ FAIL: microphone.m4a duration is $$MIC_DURATION seconds (expected ~10)"; \
+	@# Verify audio duration is ~10 seconds (8-12 second range)
+	@AUDIO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null | cut -d. -f1); \
+	if [ -z "$$AUDIO_DURATION" ]; then \
+		echo "⚠ WARNING: Could not determine audio.m4a duration (ffprobe not installed?)"; \
+	elif [ $$AUDIO_DURATION -lt 8 ] || [ $$AUDIO_DURATION -gt 12 ]; then \
+		echo "❌ FAIL: audio.m4a duration is $$AUDIO_DURATION seconds (expected ~10)"; \
 		exit 1; \
 	else \
-		echo "✓ microphone.m4a duration is $$MIC_DURATION seconds"; \
+		echo "✓ audio.m4a duration is $$AUDIO_DURATION seconds"; \
+	fi
+	@# Verify stereo audio has 2 channels
+	@AUDIO_CHANNELS=$$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null); \
+	if [ -z "$$AUDIO_CHANNELS" ]; then \
+		echo "⚠ WARNING: Could not determine audio.m4a channel count (ffprobe not installed?)"; \
+	elif [ "$$AUDIO_CHANNELS" != "2" ]; then \
+		echo "❌ FAIL: audio.m4a has $$AUDIO_CHANNELS channel(s), expected 2 (stereo)"; \
+		exit 1; \
+	else \
+		echo "✓ audio.m4a has $$AUDIO_CHANNELS channels (stereo: mic=left, system=right)"; \
 	fi
 	@echo ""
 	@echo "✅ All tests passed!"

@@ -60,11 +60,13 @@ The application is a modular Swift CLI tool organized into separate concerns:
    - Tracks frame count and duration limits
    - Writes numbered PNG files (capture_0.png, capture_1.png, etc.)
 
-4. **StreamOutput.swift** - SCStream protocol coordination (134 lines)
+4. **StreamOutput.swift** - SCStream protocol coordination (174 lines)
    - Implements `SCStreamOutput` protocol
    - Routes callbacks to ScreenCapture and AudioWriter instances
    - Thread-safe completion tracking using NSLock
    - Semaphore signaling when both audio streams finish
+   - Post-processes audio files using ffmpeg to merge into single stereo file
+   - Microphone audio mapped to left channel, system audio to right channel
 
 ### Capture Flow
 
@@ -74,7 +76,8 @@ The application is a modular Swift CLI tool organized into separate concerns:
 4. Configure `SCStreamConfiguration` conditionally based on audio flag
 5. Initialize StreamOutput with ScreenCapture and AudioWriter instances
 6. Start capture and wait for completion (audio-driven, timer, or indefinite)
-7. Stop capture and exit
+7. When both audio streams finish, merge them using ffmpeg into stereo audio.m4a
+8. Stop capture and exit
 
 ## Key Technical Details
 
@@ -85,8 +88,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 - **Frameworks used**: ScreenCaptureKit, AVFoundation, CoreImage, CoreMedia, ArgumentParser
 - **Output files**:
   - `capture_N.png` - Numbered screenshots (N = 0, 1, 2, ...)
-  - `system_audio.m4a` - System audio recording (if audio enabled)
-  - `microphone.m4a` - Microphone recording (if audio enabled, macOS 15.0+)
+  - `audio.m4a` - Stereo audio file combining microphone (left channel) and system audio (right channel)
 - **CLI Options**:
   - `-r, --frame-rate` - Frame rate in Hz (default: 1.0)
   - `-n, --frames` - Number of frames (default: 10, 0 = indefinite)
@@ -122,5 +124,11 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 The `make test` target validates:
 - Screenshot capture at 1 Hz produces 10 PNG files
 - PNG files are valid with correct dimensions
-- Audio files (if enabled) are valid M4A format
-- Audio durations are within expected range (8-12 seconds)
+- Merged audio.m4a file is valid M4A format with 2 channels (stereo)
+- Audio duration is within expected range (8-12 seconds)
+
+## Dependencies
+
+- **ffmpeg**: Required for merging system and microphone audio into stereo file
+  - Install via Homebrew: `brew install ffmpeg`
+  - If ffmpeg is not available, tool will keep separate microphone.m4a and system_audio.m4a files

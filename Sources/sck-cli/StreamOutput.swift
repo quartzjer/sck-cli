@@ -110,6 +110,8 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         defer { finishLock.unlock() }
 
         if systemAudioFinished && microphoneFinished {
+            // Both audio files are ready - now merge them into stereo
+            mergeAudioFiles()
             sema.signal()
         }
     }
@@ -128,5 +130,45 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         microphoneFinished = true
         finishLock.unlock()
         checkBothAudioFinished()
+    }
+
+    /// Merges system and microphone audio files into a single stereo file
+    /// Uses ffmpeg to combine: microphone -> left channel, system audio -> right channel
+    private func mergeAudioFiles() {
+        print("Merging audio files into stereo (mic=left, system=right)...")
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        task.arguments = [
+            "ffmpeg",
+            "-y",  // Overwrite output file
+            "-i", "microphone.m4a",
+            "-i", "system_audio.m4a",
+            "-filter_complex",
+            "[0:a]pan=stereo|c0=c0|c1=c0[left];[1:a]pan=stereo|c0=c1|c1=c1[right];[left][right]amerge=inputs=2[out]",
+            "-map", "[out]",
+            "-ac", "2",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "audio.m4a"
+        ]
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            if task.terminationStatus == 0 {
+                print("Successfully created audio.m4a (stereo: mic=left, system=right)")
+                // Clean up individual files
+                try? FileManager.default.removeItem(atPath: "microphone.m4a")
+                try? FileManager.default.removeItem(atPath: "system_audio.m4a")
+            } else {
+                print("Warning: ffmpeg merge failed with status \(task.terminationStatus)")
+                print("Keeping separate audio files: microphone.m4a and system_audio.m4a")
+            }
+        } catch {
+            print("Warning: Could not run ffmpeg to merge audio: \(error)")
+            print("Keeping separate audio files: microphone.m4a and system_audio.m4a")
+        }
     }
 }
