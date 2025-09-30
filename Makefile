@@ -119,15 +119,15 @@ test: build
 	else \
 		echo "✓ audio.m4a duration is $$AUDIO_DURATION seconds"; \
 	fi
-	@# Verify stereo audio has 2 channels
-	@AUDIO_CHANNELS=$$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null); \
-	if [ -z "$$AUDIO_CHANNELS" ]; then \
-		echo "⚠ WARNING: Could not determine audio.m4a channel count (ffprobe not installed?)"; \
-	elif [ "$$AUDIO_CHANNELS" != "2" ]; then \
-		echo "❌ FAIL: audio.m4a has $$AUDIO_CHANNELS channel(s), expected 2 (stereo)"; \
+	@# Verify audio has 2 tracks (system audio + microphone)
+	@AUDIO_TRACKS=$$(ffprobe -v error -show_entries format=nb_streams -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null); \
+	if [ -z "$$AUDIO_TRACKS" ]; then \
+		echo "⚠ WARNING: Could not determine audio.m4a track count (ffprobe not installed?)"; \
+	elif [ "$$AUDIO_TRACKS" != "2" ]; then \
+		echo "❌ FAIL: audio.m4a has $$AUDIO_TRACKS track(s), expected 2 (system + microphone)"; \
 		exit 1; \
 	else \
-		echo "✓ audio.m4a has $$AUDIO_CHANNELS channels (stereo: mic=left, system=right)"; \
+		echo "✓ audio.m4a has $$AUDIO_TRACKS tracks (system audio + microphone)"; \
 	fi
 	@echo ""
 	@echo "✅ All tests passed!"
