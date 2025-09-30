@@ -36,28 +36,45 @@ make clean-output
 
 ## Architecture
 
-The application is a single-file Swift CLI tool (`Sources/main.swift`) that:
+The application is a modular Swift CLI tool organized into separate concerns:
 
-1. **Main struct `SCKShot`**: Entry point using `@main` attribute with ArgumentParser for CLI options
-   - Supports frame rate, frame count, duration, and audio enable/disable flags
-   - Calculates capture duration from frame rate and count
-   - Handles indefinite capture mode (frames = 0)
+### Source Files (Sources/sck-cli/)
 
-2. **Class `Output`**: Implements `SCStreamOutput` protocol to handle captured frames and audio buffers
-   - Factory method `create()` for proper error handling during initialization
-   - Optional audio writers (AVAssetWriter) based on CLI flags
-   - Thread-safe finish flag management using NSLock
-   - Reusable CIContext for efficient screenshot processing
+1. **SCKShot.swift** - CLI entry point (151 lines)
+   - Main struct using `@main` attribute with ArgumentParser
+   - Parses CLI arguments: frame rate, frame count, duration, audio flags
+   - Discovers displays and creates SCStream configuration
+   - Orchestrates ScreenCapture, AudioWriter, and StreamOutput components
+   - Handles three completion modes: audio-driven, timer-driven, indefinite
 
-3. **Capture flow**:
-   - Parses CLI arguments for frame rate, duration, and audio settings
-   - Discovers the primary display using `SCShareableContent`
-   - Creates `SCContentFilter` for the display
-   - Configures `SCStreamConfiguration` conditionally based on audio flag
-   - Captures screenshots at specified intervals (default 1 Hz)
-   - Optionally records system audio and microphone to separate M4A files
-   - Uses semaphore synchronization for audio completion (or timer for video-only)
-   - Continues until duration/frame limit reached or user interrupts (Ctrl-C)
+2. **AudioWriter.swift** - Audio capture logic (154 lines)
+   - Manages AVAssetWriter and AVAssetWriterInput for M4A files
+   - Handles audio buffer timing and retiming to start from zero
+   - Factory method `create()` for proper error handling
+   - Completion callbacks to signal when recording finishes
+   - Separate instances for system audio and microphone
+
+3. **ScreenCapture.swift** - Screenshot logic (64 lines)
+   - Manages screenshot timing based on frame rate
+   - Reusable CIContext for efficient PNG rendering
+   - Tracks frame count and duration limits
+   - Writes numbered PNG files (capture_0.png, capture_1.png, etc.)
+
+4. **StreamOutput.swift** - SCStream protocol coordination (134 lines)
+   - Implements `SCStreamOutput` protocol
+   - Routes callbacks to ScreenCapture and AudioWriter instances
+   - Thread-safe completion tracking using NSLock
+   - Semaphore signaling when both audio streams finish
+
+### Capture Flow
+
+1. Parse CLI arguments for frame rate, duration, and audio settings
+2. Discover the primary display using `SCShareableContent`
+3. Create `SCContentFilter` for the display
+4. Configure `SCStreamConfiguration` conditionally based on audio flag
+5. Initialize StreamOutput with ScreenCapture and AudioWriter instances
+6. Start capture and wait for completion (audio-driven, timer, or indefinite)
+7. Stop capture and exit
 
 ## Key Technical Details
 
@@ -87,16 +104,18 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 ## Development Notes
 
 - **Always run `make test` after code changes** to validate functionality and ensure tests pass
-- The tool uses `@unchecked Sendable` for the Output class with proper NSLock synchronization
+- **Modular architecture**: Separate files for CLI, audio, screen capture, and stream coordination
+- Classes use `@unchecked Sendable` with proper NSLock synchronization for thread safety
 - Audio writers are optional - only created when audio flag is enabled
-- Factory method pattern used for Output initialization to handle errors gracefully
+- Factory method pattern used for AudioWriter and StreamOutput initialization
 - Thread-safe access to shared state using NSLock for finish flags
-- Reusable CIContext for efficient screenshot rendering
+- Reusable CIContext in ScreenCapture for efficient screenshot rendering
 - Microphone capture is conditionally enabled for macOS 15.0+ using `#available` checks
 - Supports three completion modes:
   - Audio-driven: waits for audio recording completion (with audio enabled)
   - Timer-driven: waits for specified duration (video-only mode)
   - Indefinite: runs until user interrupts with Ctrl-C (frames = 0)
+- Main file is named SCKShot.swift (not main.swift) to avoid Swift @main attribute conflicts
 
 ## Testing
 
