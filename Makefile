@@ -64,6 +64,78 @@ uninstall:
 	rm -f /usr/local/bin/$(EXECUTABLE)
 	@echo "Uninstallation complete."
 
+# Test the tool by running it and verifying outputs
+.PHONY: test
+test: build
+	@echo "Testing $(EXECUTABLE)..."
+	@echo "Cleaning up any previous test outputs..."
+	@rm -f capture_*.png system_audio.m4a microphone.m4a
+	@echo "Running capture (this will take ~10 seconds)..."
+	@$(DEBUG_BUILD)
+	@echo ""
+	@echo "Verifying outputs..."
+	@echo ""
+	@# Check for PNG screenshots (expecting ~10 files at 1Hz over 10 seconds)
+	@SCREENSHOT_COUNT=$$(ls -1 capture_*.png 2>/dev/null | wc -l | tr -d ' '); \
+	if [ $$SCREENSHOT_COUNT -lt 8 ]; then \
+		echo "❌ FAIL: Expected at least 8 screenshots, found $$SCREENSHOT_COUNT"; \
+		exit 1; \
+	else \
+		echo "✓ Found $$SCREENSHOT_COUNT screenshot(s)"; \
+	fi
+	@# Verify first screenshot is valid PNG
+	@if file capture_0.png | grep -q "PNG image data"; then \
+		DIMENSIONS=$$(file capture_0.png | sed -n 's/.*PNG image data, \([0-9]* x [0-9]*\).*/\1/p'); \
+		echo "✓ capture_0.png is valid PNG ($$DIMENSIONS)"; \
+	else \
+		echo "❌ FAIL: capture_0.png is not a valid PNG file"; \
+		exit 1; \
+	fi
+	@# Check system audio file exists and is valid
+	@if [ ! -f system_audio.m4a ]; then \
+		echo "❌ FAIL: system_audio.m4a not found"; \
+		exit 1; \
+	fi
+	@if file system_audio.m4a | grep -q "ISO Media"; then \
+		echo "✓ system_audio.m4a exists and is valid M4A"; \
+	else \
+		echo "❌ FAIL: system_audio.m4a is not a valid M4A file"; \
+		exit 1; \
+	fi
+	@# Verify system audio duration is ~10 seconds (8-12 second range)
+	@SYSTEM_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 system_audio.m4a 2>/dev/null | cut -d. -f1); \
+	if [ -z "$$SYSTEM_DURATION" ]; then \
+		echo "⚠ WARNING: Could not determine system_audio.m4a duration (ffprobe not installed?)"; \
+	elif [ $$SYSTEM_DURATION -lt 8 ] || [ $$SYSTEM_DURATION -gt 12 ]; then \
+		echo "❌ FAIL: system_audio.m4a duration is $$SYSTEM_DURATION seconds (expected ~10)"; \
+		exit 1; \
+	else \
+		echo "✓ system_audio.m4a duration is $$SYSTEM_DURATION seconds"; \
+	fi
+	@# Check microphone file exists and is valid
+	@if [ ! -f microphone.m4a ]; then \
+		echo "❌ FAIL: microphone.m4a not found"; \
+		exit 1; \
+	fi
+	@if file microphone.m4a | grep -q "ISO Media"; then \
+		echo "✓ microphone.m4a exists and is valid M4A"; \
+	else \
+		echo "❌ FAIL: microphone.m4a is not a valid M4A file"; \
+		exit 1; \
+	fi
+	@# Verify microphone duration is ~10 seconds (8-12 second range)
+	@MIC_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 microphone.m4a 2>/dev/null | cut -d. -f1); \
+	if [ -z "$$MIC_DURATION" ]; then \
+		echo "⚠ WARNING: Could not determine microphone.m4a duration (ffprobe not installed?)"; \
+	elif [ $$MIC_DURATION -lt 8 ] || [ $$MIC_DURATION -gt 12 ]; then \
+		echo "❌ FAIL: microphone.m4a duration is $$MIC_DURATION seconds (expected ~10)"; \
+		exit 1; \
+	else \
+		echo "✓ microphone.m4a duration is $$MIC_DURATION seconds"; \
+	fi
+	@echo ""
+	@echo "✅ All tests passed!"
+
 # Show help
 .PHONY: help
 help:
@@ -73,6 +145,7 @@ help:
 	@echo "  make run        - Build and run the tool"
 	@echo "  make run-debug  - Run the debug executable directly"
 	@echo "  make run-release - Run the release executable directly"
+	@echo "  make test       - Run the tool and verify outputs are valid"
 	@echo "  make clean      - Remove all build artifacts"
 	@echo "  make install    - Install to /usr/local/bin (may require sudo)"
 	@echo "  make uninstall  - Remove from /usr/local/bin"
