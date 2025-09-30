@@ -4,11 +4,12 @@ A lightweight macOS command-line tool for capturing screenshots and audio using 
 
 ## Features
 
-- Captures the primary display to a PNG file (`capture.png`)
-- Records system audio and microphone to an M4A file (`audio.m4a`)
+- Captures screenshots at configurable frame rates (default: 1 Hz)
+- Supports timed capture (frame count or duration) or indefinite capture mode
+- Optional audio recording (system audio + microphone on macOS 15.0+)
+- High-quality output: PNG screenshots with sRGB color space, M4A audio with AAC codec
 - Minimal dependencies - uses only system frameworks
-- Fast and efficient single-frame capture with audio sample
-- Written in Swift 6.1
+- Written in Swift 6.1 with comprehensive error handling
 
 ## Requirements
 
@@ -24,11 +25,17 @@ A lightweight macOS command-line tool for capturing screenshots and audio using 
 # Build the executable
 make build
 
-# Run the tool
+# Run the tool with default settings
 make run
+
+# Run tests to verify functionality
+make test
 
 # Clean build artifacts
 make clean
+
+# Clean captured output files
+make clean-output
 ```
 
 ### Using Swift Package Manager directly
@@ -46,10 +53,12 @@ swift run sck-cli
 
 ## Usage
 
-After building, run the executable to capture a screenshot:
+### Basic Usage
+
+Capture 10 screenshots at 1 Hz with audio (default behavior):
 
 ```bash
-./sck-cli
+.build/debug/sck-cli
 ```
 
 Or use the Makefile:
@@ -58,7 +67,36 @@ Or use the Makefile:
 make run
 ```
 
-The screenshot will be saved as `capture.png` and audio as `audio.m4a` in the current directory.
+Output files are saved in the current directory:
+- `capture_0.png`, `capture_1.png`, ... `capture_9.png` - Screenshots
+- `system_audio.m4a` - System audio recording
+- `microphone.m4a` - Microphone recording (macOS 15.0+)
+
+### Command-Line Options
+
+```bash
+# Show help and available options
+.build/debug/sck-cli --help
+
+# Capture 20 frames at 2 Hz without audio
+.build/debug/sck-cli --frame-rate 2.0 --frames 20 --no-audio
+
+# Capture for 30 seconds at 0.5 Hz with audio
+.build/debug/sck-cli -r 0.5 -d 30
+
+# Indefinite capture at 1 Hz (Ctrl-C to stop)
+.build/debug/sck-cli --frames 0
+
+# Capture 5 screenshots only (no audio)
+.build/debug/sck-cli -n 5 --no-audio
+```
+
+### Available Options
+
+- `-r, --frame-rate <rate>` - Screenshots per second (default: 1.0)
+- `-n, --frames <count>` - Number of frames to capture (default: 10, 0 for indefinite)
+- `-d, --duration <seconds>` - Capture duration (overrides frame count)
+- `--audio` / `--no-audio` - Enable/disable audio capture (default: enabled)
 
 ## Build Output
 
@@ -69,12 +107,14 @@ The built executable will be located at:
 ## How It Works
 
 The tool uses Apple's ScreenCaptureKit framework to:
-1. Discover available displays
-2. Create a content filter for the primary display
-3. Configure a stream for screen and audio capture
-4. Capture one frame and save it as a PNG file
-5. Capture an audio sample and save it as an M4A file
-6. Exit immediately after both captures complete
+1. Parse command-line arguments to determine capture settings
+2. Discover available displays and select the primary display
+3. Create a content filter for the display
+4. Configure a stream for screen capture and optionally audio capture
+5. Capture screenshots at the specified frame rate and interval
+6. Optionally record system audio and microphone input to M4A files
+7. Continue until the specified duration/frame count is reached or user interrupts
+8. Clean up and exit gracefully
 
 ## Permissions
 
