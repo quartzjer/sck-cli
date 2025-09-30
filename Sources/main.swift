@@ -17,38 +17,68 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
     private var captureStartTime: CFAbsoluteTime = 0
     private let screenshotInterval: CFAbsoluteTime = 1.0 // 1 second = 1Hz
     private let captureDuration: Double = 10.0
-    
+
     private let systemAudioWriter: AVAssetWriter
     private let systemAudioInput: AVAssetWriterInput
     private var systemAudioSessionStarted = false
     private var systemFirstAudioTime: CMTime?
-    
+
     private let microphoneWriter: AVAssetWriter
     private let microphoneInput: AVAssetWriterInput
     private var microphoneSessionStarted = false
     private var microphoneFirstAudioTime: CMTime?
-    
-    private let audioDuration: Double = 10.0 // 10 seconds
+
     private var systemAudioFinished = false
     private var microphoneFinished = false
     private var systemAudioBufferCount = 0
     private var microphoneBufferCount = 0
+    private let finishLock = NSLock()
 
-    override init() {
+    private let ciContext = CIContext(options: nil)
+
+    static func create() -> Output? {
         // System audio writer setup
         let systemAudioURL = URL(fileURLWithPath: "system_audio.m4a")
         if FileManager.default.fileExists(atPath: systemAudioURL.path) {
-            try? FileManager.default.removeItem(at: systemAudioURL)
+            do {
+                try FileManager.default.removeItem(at: systemAudioURL)
+            } catch {
+                fputs("Failed to remove existing system_audio.m4a: \(error)\n", stderr)
+                return nil
+            }
         }
-        systemAudioWriter = try! AVAssetWriter(url: systemAudioURL, fileType: .m4a)
-        
+
+        let systemWriter: AVAssetWriter
+        do {
+            systemWriter = try AVAssetWriter(url: systemAudioURL, fileType: .m4a)
+        } catch {
+            fputs("Failed to create system audio writer: \(error)\n", stderr)
+            return nil
+        }
+
         // Microphone writer setup
         let microphoneURL = URL(fileURLWithPath: "microphone.m4a")
         if FileManager.default.fileExists(atPath: microphoneURL.path) {
-            try? FileManager.default.removeItem(at: microphoneURL)
+            do {
+                try FileManager.default.removeItem(at: microphoneURL)
+            } catch {
+                fputs("Failed to remove existing microphone.m4a: \(error)\n", stderr)
+                return nil
+            }
         }
-        microphoneWriter = try! AVAssetWriter(url: microphoneURL, fileType: .m4a)
-        
+
+        let microphoneWriter: AVAssetWriter
+        do {
+            microphoneWriter = try AVAssetWriter(url: microphoneURL, fileType: .m4a)
+        } catch {
+            fputs("Failed to create microphone writer: \(error)\n", stderr)
+            return nil
+        }
+
+        return Output(systemWriter: systemWriter, microphoneWriter: microphoneWriter)
+    }
+
+    private init(systemWriter: AVAssetWriter, microphoneWriter: AVAssetWriter) {
         // Use AAC format for M4A files
         let audioSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -56,21 +86,27 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
             AVNumberOfChannelsKey: 2,
             AVEncoderBitRateKey: 128_000  // 128 kbps for good quality
         ]
-        
+
+        self.systemAudioWriter = systemWriter
+        self.microphoneWriter = microphoneWriter
+
         // System audio input setup
-        systemAudioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+        self.systemAudioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
         systemAudioInput.expectsMediaDataInRealTime = true
         if systemAudioWriter.canAdd(systemAudioInput) {
             systemAudioWriter.add(systemAudioInput)
         }
-        systemAudioWriter.startWriting()
-        
+
         // Microphone input setup
-        microphoneInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+        self.microphoneInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
         microphoneInput.expectsMediaDataInRealTime = true
         if microphoneWriter.canAdd(microphoneInput) {
             microphoneWriter.add(microphoneInput)
         }
+
+        super.init()
+
+        systemAudioWriter.startWriting()
         microphoneWriter.startWriting()
     }
     
@@ -114,17 +150,16 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
             
             // Capture screenshot at 1Hz interval
             if screenshotCount == 0 || (currentTime - lastScreenshotTime) >= screenshotInterval {
-                
+
                 let ci = CIImage(cvImageBuffer: imgBuf)
-                let ctx = CIContext(options: nil)
                 let url = URL(fileURLWithPath: "capture_\(screenshotCount).png")
-                
+
                 if let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-                   let data = ctx.pngRepresentation(of: ci, format: .BGRA8, colorSpace: colorSpace) {
+                   let data = ciContext.pngRepresentation(of: ci, format: .BGRA8, colorSpace: colorSpace) {
                     try? data.write(to: url)
                     print("wrote \(url.path)")
                 }
-                
+
                 screenshotCount += 1
                 lastScreenshotTime = currentTime
             }
@@ -139,9 +174,12 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
     
     private func handleAudioBuffer(_ sb: CMSampleBuffer, isSystemAudio: Bool) {
         let currentTime = CMSampleBufferGetPresentationTimeStamp(sb)
-        
+
         if isSystemAudio {
-            guard !systemAudioFinished else { return }
+            finishLock.lock()
+            let finished = systemAudioFinished
+            finishLock.unlock()
+            guard !finished else { return }
             
             if !systemAudioSessionStarted {
                 systemAudioWriter.startSession(atSourceTime: .zero)
@@ -152,8 +190,8 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
             
             guard let firstTime = systemFirstAudioTime else { return }
             let mediaElapsed = CMTimeGetSeconds(CMTimeSubtract(currentTime, firstTime))
-            
-            if mediaElapsed < audioDuration {
+
+            if mediaElapsed < captureDuration {
                 if systemAudioInput.isReadyForMoreMediaData {
                     let adjustedTime = CMTimeSubtract(currentTime, firstTime)
                     if let retimedBuffer = createRetimedSampleBuffer(sb, newTime: adjustedTime) {
@@ -161,21 +199,32 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
                         systemAudioBufferCount += 1
                     }
                 }
-            } else if !systemAudioFinished {
-                print("Finishing system audio recording after \(String(format: "%.2f", mediaElapsed)) seconds")
-                systemAudioFinished = true
-                systemAudioInput.markAsFinished()
-                systemAudioWriter.finishWriting {
-                    print("wrote system_audio.m4a (10 seconds)")
-                    if self.systemAudioWriter.status == .failed {
-                        print("System audio error: \(String(describing: self.systemAudioWriter.error))")
+            } else {
+                finishLock.lock()
+                let alreadyFinished = systemAudioFinished
+                if !alreadyFinished {
+                    systemAudioFinished = true
+                }
+                finishLock.unlock()
+
+                if !alreadyFinished {
+                    print("Finishing system audio recording after \(String(format: "%.2f", mediaElapsed)) seconds")
+                    systemAudioInput.markAsFinished()
+                    systemAudioWriter.finishWriting {
+                        print("wrote system_audio.m4a (10 seconds)")
+                        if self.systemAudioWriter.status == .failed {
+                            print("System audio error: \(String(describing: self.systemAudioWriter.error))")
+                        }
+                        self.checkBothAudioFinished()
                     }
-                    self.checkBothAudioFinished()
                 }
             }
         } else {
-            guard !microphoneFinished else { return }
-            
+            finishLock.lock()
+            let finished = microphoneFinished
+            finishLock.unlock()
+            guard !finished else { return }
+
             if !microphoneSessionStarted {
                 microphoneWriter.startSession(atSourceTime: .zero)
                 microphoneSessionStarted = true
@@ -185,8 +234,8 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
             
             guard let firstTime = microphoneFirstAudioTime else { return }
             let mediaElapsed = CMTimeGetSeconds(CMTimeSubtract(currentTime, firstTime))
-            
-            if mediaElapsed < audioDuration {
+
+            if mediaElapsed < captureDuration {
                 if microphoneInput.isReadyForMoreMediaData {
                     let adjustedTime = CMTimeSubtract(currentTime, firstTime)
                     if let retimedBuffer = createRetimedSampleBuffer(sb, newTime: adjustedTime) {
@@ -194,22 +243,33 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
                         microphoneBufferCount += 1
                     }
                 }
-            } else if !microphoneFinished {
-                print("Finishing microphone recording after \(String(format: "%.2f", mediaElapsed)) seconds")
-                microphoneFinished = true
-                microphoneInput.markAsFinished()
-                microphoneWriter.finishWriting {
-                    print("wrote microphone.m4a (10 seconds)")
-                    if self.microphoneWriter.status == .failed {
-                        print("Microphone error: \(String(describing: self.microphoneWriter.error))")
+            } else {
+                finishLock.lock()
+                let alreadyFinished = microphoneFinished
+                if !alreadyFinished {
+                    microphoneFinished = true
+                }
+                finishLock.unlock()
+
+                if !alreadyFinished {
+                    print("Finishing microphone recording after \(String(format: "%.2f", mediaElapsed)) seconds")
+                    microphoneInput.markAsFinished()
+                    microphoneWriter.finishWriting {
+                        print("wrote microphone.m4a (10 seconds)")
+                        if self.microphoneWriter.status == .failed {
+                            print("Microphone error: \(String(describing: self.microphoneWriter.error))")
+                        }
+                        self.checkBothAudioFinished()
                     }
-                    self.checkBothAudioFinished()
                 }
             }
         }
     }
     
     private func checkBothAudioFinished() {
+        finishLock.lock()
+        defer { finishLock.unlock() }
+
         if systemAudioFinished && microphoneFinished {
             sema.signal()
         }
@@ -219,10 +279,7 @@ final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
 @MainActor
 @main
 struct SCKShot: AsyncParsableCommand {
-    
-    // Keep strong reference to output to prevent garbage collection
-    static var streamOutput: Output?
-    
+
     func run() async throws {
         // 1) Discover displays
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
@@ -251,19 +308,26 @@ struct SCKShot: AsyncParsableCommand {
         // 4) Create stream and a frame/audio receiver
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
 
-        let out = Output()
-        SCKShot.streamOutput = out  // Keep strong reference to prevent garbage collection
-        
-        try! stream.addStreamOutput(out, type: .screen, sampleHandlerQueue: .main)
-        try! stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
-        
+        guard let out = Output.create() else {
+            fputs("Failed to initialize audio writers\n", stderr)
+            Darwin.exit(1)
+        }
+
+        do {
+            try stream.addStreamOutput(out, type: .screen, sampleHandlerQueue: .main)
+            try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
+        } catch {
+            fputs("Failed to add stream outputs: \(error)\n", stderr)
+            Darwin.exit(1)
+        }
+
         // Add microphone output for macOS 15.0+
         if #available(macOS 15.0, *) {
             do {
                 try stream.addStreamOutput(out, type: .microphone, sampleHandlerQueue: .main)
                 print("Both system audio and microphone capture enabled")
             } catch {
-                print("Could not enable microphone capture: \(error)")
+                fputs("Could not enable microphone capture: \(error)\n", stderr)
                 Darwin.exit(1)
             }
         } else {
