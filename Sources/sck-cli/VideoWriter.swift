@@ -29,14 +29,14 @@ final class VideoWriter: @unchecked Sendable {
         height: Int,
         frameRate: Double,
         duration: Double?,
-        bitrate: Int = 4_000_000
+        bitrate: Int = 8_000_000
     ) throws -> VideoWriter {
         let writer = try AVAssetWriter(url: url, fileType: .mov)
 
         let compression: [String: Any] = [
-            AVVideoAverageBitRateKey: bitrate,
             AVVideoExpectedSourceFrameRateKey: Int(frameRate),
             AVVideoAllowFrameReorderingKey: false,
+            AVVideoAverageBitRateKey: bitrate,
             // Make keyframes extremely rare
             AVVideoMaxKeyFrameIntervalKey: 30_000,
             AVVideoMaxKeyFrameIntervalDurationKey: 3_600
@@ -126,6 +126,11 @@ final class VideoWriter: @unchecked Sendable {
         guard shouldFinish else {
             completion(.failure(NSError(domain: "VideoWriter", code: -2, userInfo: [NSLocalizedDescriptionKey: "No frames written"])))
             return
+        }
+
+        // Drain any remaining frames before marking finished
+        while !videoInput.isReadyForMoreMediaData {
+            Thread.sleep(forTimeInterval: 0.01)
         }
 
         videoInput.markAsFinished()
