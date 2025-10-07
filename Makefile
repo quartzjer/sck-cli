@@ -53,7 +53,7 @@ clean:
 .PHONY: clean-output
 clean-output:
 	@echo "Cleaning capture outputs..."
-	rm -f capture.mov audio.m4a
+	rm -f capture.mov capture.m4a
 	@echo "Output files cleaned."
 
 # Install to /usr/local/bin (requires sudo)
@@ -76,9 +76,9 @@ uninstall:
 test: build
 	@echo "Testing $(EXECUTABLE)..."
 	@echo "Cleaning up any previous test outputs..."
-	@rm -f capture.mov audio.m4a
+	@rm -f capture.mov capture.m4a
 	@echo "Running capture (this will take ~5 seconds)..."
-	@$(DEBUG_BUILD) capture.mov --length 5
+	@$(DEBUG_BUILD) capture --length 5
 	@echo ""
 	@echo "Verifying outputs..."
 	@echo ""
@@ -117,35 +117,35 @@ test: build
 		exit 1; \
 	fi
 	@# Check stereo audio file exists and is valid
-	@if [ ! -f audio.m4a ]; then \
-		echo "❌ FAIL: audio.m4a not found"; \
+	@if [ ! -f capture.m4a ]; then \
+		echo "❌ FAIL: capture.m4a not found"; \
 		exit 1; \
 	fi
-	@if file audio.m4a | grep -q "ISO Media"; then \
-		echo "✓ audio.m4a exists and is valid M4A"; \
+	@if file capture.m4a | grep -q "ISO Media"; then \
+		echo "✓ capture.m4a exists and is valid M4A"; \
 	else \
-		echo "❌ FAIL: audio.m4a is not a valid M4A file"; \
+		echo "❌ FAIL: capture.m4a is not a valid M4A file"; \
 		exit 1; \
 	fi
 	@# Verify audio duration is ~5 seconds (4-7 second range)
-	@AUDIO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null | cut -d. -f1); \
+	@AUDIO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 capture.m4a 2>/dev/null | cut -d. -f1); \
 	if [ -z "$$AUDIO_DURATION" ]; then \
-		echo "⚠ WARNING: Could not determine audio.m4a duration (ffprobe not installed?)"; \
+		echo "⚠ WARNING: Could not determine capture.m4a duration (ffprobe not installed?)"; \
 	elif [ $$AUDIO_DURATION -lt 4 ] || [ $$AUDIO_DURATION -gt 7 ]; then \
-		echo "❌ FAIL: audio.m4a duration is $$AUDIO_DURATION seconds (expected ~5)"; \
+		echo "❌ FAIL: capture.m4a duration is $$AUDIO_DURATION seconds (expected ~5)"; \
 		exit 1; \
 	else \
-		echo "✓ audio.m4a duration is $$AUDIO_DURATION seconds"; \
+		echo "✓ capture.m4a duration is $$AUDIO_DURATION seconds"; \
 	fi
 	@# Verify audio has 2 tracks (system audio + microphone)
-	@AUDIO_TRACKS=$$(ffprobe -v error -show_entries format=nb_streams -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null); \
+	@AUDIO_TRACKS=$$(ffprobe -v error -show_entries format=nb_streams -of default=noprint_wrappers=1:nokey=1 capture.m4a 2>/dev/null); \
 	if [ -z "$$AUDIO_TRACKS" ]; then \
-		echo "⚠ WARNING: Could not determine audio.m4a track count (ffprobe not installed?)"; \
+		echo "⚠ WARNING: Could not determine capture.m4a track count (ffprobe not installed?)"; \
 	elif [ "$$AUDIO_TRACKS" != "2" ]; then \
-		echo "❌ FAIL: audio.m4a has $$AUDIO_TRACKS track(s), expected 2 (system + microphone)"; \
+		echo "❌ FAIL: capture.m4a has $$AUDIO_TRACKS track(s), expected 2 (system + microphone)"; \
 		exit 1; \
 	else \
-		echo "✓ audio.m4a has $$AUDIO_TRACKS tracks (system audio + microphone)"; \
+		echo "✓ capture.m4a has $$AUDIO_TRACKS tracks (system audio + microphone)"; \
 	fi
 	@echo ""
 	@echo "✅ All tests passed!"

@@ -17,8 +17,8 @@ struct SCKShot: AsyncParsableCommand {
         """
     )
 
-    @Argument(help: "Output video filename (e.g., output.mov)")
-    var outputFile: String
+    @Argument(help: "Output base filename (e.g., 'capture' creates capture.mov and capture.m4a)")
+    var outputBase: String
 
     @Option(name: [.customShort("r"), .long], help: "Frame rate in Hz (frames per second)")
     var frameRate: Double = 1.0
@@ -65,7 +65,8 @@ struct SCKShot: AsyncParsableCommand {
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
 
         guard let out = StreamOutput.create(
-            videoURL: URL(fileURLWithPath: outputFile),
+            videoURL: URL(fileURLWithPath: "\(outputBase).mov"),
+            audioURL: URL(fileURLWithPath: "\(outputBase).m4a"),
             width: display.width,
             height: display.height,
             frameRate: frameRate,
