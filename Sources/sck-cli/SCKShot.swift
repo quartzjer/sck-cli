@@ -10,32 +10,27 @@ import CoreMedia
 struct SCKShot: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sck-cli",
-        abstract: "Capture screenshots and audio using ScreenCaptureKit",
+        abstract: "Capture video and audio using ScreenCaptureKit",
         discussion: """
-        Captures screenshots at a specified frame rate and optionally records system audio and microphone input.
-        By default, captures at 1 Hz for 10 seconds with audio enabled.
+        Captures screen video at a specified frame rate and optionally records system audio and microphone input.
+        Requires an output filename. Specify duration with --length in seconds.
         """
     )
 
-    @Option(name: [.customShort("r"), .long], help: "Frame rate in Hz (screenshots per second)")
+    @Argument(help: "Output video filename (e.g., output.mov)")
+    var outputFile: String
+
+    @Option(name: [.customShort("r"), .long], help: "Frame rate in Hz (frames per second)")
     var frameRate: Double = 1.0
 
-    @Option(name: [.customShort("n"), .long], help: "Number of frames to capture (0 for indefinite)")
-    var frames: Int = 10
-
-    @Option(name: [.customShort("d"), .long], help: "Duration in seconds (ignored if frames is non-zero)")
-    var duration: Double?
+    @Option(name: [.customShort("l"), .long], help: "Capture duration in seconds")
+    var length: Double?
 
     @Flag(name: .long, inversion: .prefixedNo, help: "Enable audio capture (system audio and microphone)")
     var audio: Bool = true
 
     func run() async throws {
-        // Calculate capture duration from frames if not explicitly set
-        let captureDuration: Double? = if frames > 0 {
-            Double(frames) / frameRate
-        } else {
-            duration
-        }
+        let captureDuration = length
 
         // Discover displays
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
@@ -70,6 +65,7 @@ struct SCKShot: AsyncParsableCommand {
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
 
         guard let out = StreamOutput.create(
+            videoURL: URL(fileURLWithPath: outputFile),
             width: display.width,
             height: display.height,
             frameRate: frameRate,
@@ -108,7 +104,7 @@ struct SCKShot: AsyncParsableCommand {
         try? await stream.startCapture()
 
         // Print status message
-        printStatusMessage(audio: audio, captureDuration: captureDuration, frameRate: frameRate, frames: frames)
+        printStatusMessage(audio: audio, captureDuration: captureDuration, frameRate: frameRate)
 
         // Wait for capture to complete
         await waitForCompletion(audio: audio, captureDuration: captureDuration, output: out)
@@ -131,7 +127,7 @@ struct SCKShot: AsyncParsableCommand {
         Darwin.exit(0)
     }
 
-    private func printStatusMessage(audio: Bool, captureDuration: Double?, frameRate: Double, frames: Int) {
+    private func printStatusMessage(audio: Bool, captureDuration: Double?, frameRate: Double) {
         if audio {
             if let duration = captureDuration {
                 if #available(macOS 15.0, *) {
@@ -143,10 +139,10 @@ struct SCKShot: AsyncParsableCommand {
                 print("Started capture - recording indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...")
             }
         } else {
-            if captureDuration != nil {
-                print("Started capture - \(frames) frame(s) at \(String(format: "%.1f", frameRate)) Hz...")
+            if let duration = captureDuration {
+                print("Started capture - recording \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...")
             } else {
-                print("Started capture - indefinite frames at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
+                print("Started capture - indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
             }
         }
     }

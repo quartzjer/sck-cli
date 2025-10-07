@@ -13,6 +13,7 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
     /// Creates a stream output coordinator
     /// - Parameters:
+    ///   - videoURL: Output URL for video file
     ///   - width: Video width in pixels
     ///   - height: Video height in pixels
     ///   - frameRate: Frame rate for video
@@ -20,6 +21,7 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     ///   - captureAudio: Whether to capture audio
     /// - Returns: StreamOutput instance, or nil if writer creation fails
     static func create(
+        videoURL: URL,
         width: Int,
         height: Int,
         frameRate: Double,
@@ -43,7 +45,7 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let videoWriter: VideoWriter
         do {
             videoWriter = try VideoWriter.create(
-                url: URL(fileURLWithPath: "capture.mov"),
+                url: videoURL,
                 width: width,
                 height: height,
                 frameRate: frameRate,

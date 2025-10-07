@@ -77,8 +77,8 @@ test: build
 	@echo "Testing $(EXECUTABLE)..."
 	@echo "Cleaning up any previous test outputs..."
 	@rm -f capture.mov audio.m4a
-	@echo "Running capture (this will take ~10 seconds)..."
-	@$(DEBUG_BUILD)
+	@echo "Running capture (this will take ~5 seconds)..."
+	@$(DEBUG_BUILD) capture.mov --length 5
 	@echo ""
 	@echo "Verifying outputs..."
 	@echo ""
@@ -94,12 +94,12 @@ test: build
 		echo "❌ FAIL: capture.mov is not a valid .mov video file"; \
 		exit 1; \
 	fi
-	@# Verify video duration is ~10 seconds (8-12 second range)
+	@# Verify video duration is ~5 seconds (4-7 second range)
 	@VIDEO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 capture.mov 2>/dev/null | cut -d. -f1); \
 	if [ -z "$$VIDEO_DURATION" ]; then \
 		echo "⚠ WARNING: Could not determine capture.mov duration (ffprobe not installed?)"; \
-	elif [ $$VIDEO_DURATION -lt 8 ] || [ $$VIDEO_DURATION -gt 12 ]; then \
-		echo "❌ FAIL: capture.mov duration is $$VIDEO_DURATION seconds (expected ~10)"; \
+	elif [ $$VIDEO_DURATION -lt 4 ] || [ $$VIDEO_DURATION -gt 7 ]; then \
+		echo "❌ FAIL: capture.mov duration is $$VIDEO_DURATION seconds (expected ~5)"; \
 		exit 1; \
 	else \
 		echo "✓ capture.mov duration is $$VIDEO_DURATION seconds"; \
@@ -127,12 +127,12 @@ test: build
 		echo "❌ FAIL: audio.m4a is not a valid M4A file"; \
 		exit 1; \
 	fi
-	@# Verify audio duration is ~10 seconds (8-12 second range)
+	@# Verify audio duration is ~5 seconds (4-7 second range)
 	@AUDIO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 audio.m4a 2>/dev/null | cut -d. -f1); \
 	if [ -z "$$AUDIO_DURATION" ]; then \
 		echo "⚠ WARNING: Could not determine audio.m4a duration (ffprobe not installed?)"; \
-	elif [ $$AUDIO_DURATION -lt 8 ] || [ $$AUDIO_DURATION -gt 12 ]; then \
-		echo "❌ FAIL: audio.m4a duration is $$AUDIO_DURATION seconds (expected ~10)"; \
+	elif [ $$AUDIO_DURATION -lt 4 ] || [ $$AUDIO_DURATION -gt 7 ]; then \
+		echo "❌ FAIL: audio.m4a duration is $$AUDIO_DURATION seconds (expected ~5)"; \
 		exit 1; \
 	else \
 		echo "✓ audio.m4a duration is $$AUDIO_DURATION seconds"; \
