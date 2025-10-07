@@ -32,6 +32,18 @@ struct SCKShot: AsyncParsableCommand {
     func run() async throws {
         let captureDuration = length
 
+        // Check for existing output files
+        let videoPath = "\(outputBase).mov"
+        let audioPath = "\(outputBase).m4a"
+        if FileManager.default.fileExists(atPath: videoPath) {
+            fputs("Error: \(videoPath) already exists\n", stderr)
+            Darwin.exit(1)
+        }
+        if audio && FileManager.default.fileExists(atPath: audioPath) {
+            fputs("Error: \(audioPath) already exists\n", stderr)
+            Darwin.exit(1)
+        }
+
         // Discover displays
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               let display = content.displays.first else {
@@ -52,7 +64,7 @@ struct SCKShot: AsyncParsableCommand {
         cfg.showsCursor = true
         cfg.scalesToFit = false  // Avoid resampling - use exact captured size
         cfg.sampleRate = 48_000
-        cfg.channelCount = 2
+        cfg.channelCount = 1
 
         // Configure audio capture based on flag
         cfg.capturesAudio = audio
