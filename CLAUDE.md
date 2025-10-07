@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A lightweight macOS command-line tool that captures screenshots and audio using Apple's ScreenCaptureKit framework. The tool supports configurable frame rates, flexible capture durations (timed or indefinite), and optional audio recording of both system audio and microphone input.
+A lightweight macOS command-line tool that captures video and audio using Apple's ScreenCaptureKit framework. The tool supports configurable frame rates, flexible capture durations (timed or indefinite), and optional audio recording of both system audio and microphone input. Video is encoded using hardware H.264 in .mov format with efficient NV12 pixel format.
 
 ## Build Commands
 
@@ -30,7 +30,7 @@ make test
 # Clean build artifacts
 make clean
 
-# Clean captured output files (screenshots and audio)
+# Clean captured output files (video and audio)
 make clean-output
 ```
 
@@ -40,11 +40,11 @@ The application is a modular Swift CLI tool organized into separate concerns:
 
 ### Source Files (Sources/sck-cli/)
 
-1. **SCKShot.swift** - CLI entry point (151 lines)
+1. **SCKShot.swift** - CLI entry point (~170 lines)
    - Main struct using `@main` attribute with ArgumentParser
    - Parses CLI arguments: frame rate, frame count, duration, audio flags
-   - Discovers displays and creates SCStream configuration
-   - Orchestrates ScreenCapture, AudioWriter, and StreamOutput components
+   - Discovers displays and creates SCStream configuration with NV12 pixel format
+   - Orchestrates VideoWriter, AudioWriter, and StreamOutput components
    - Handles three completion modes: audio-driven, timer-driven, indefinite
 
 2. **AudioWriter.swift** - Audio capture logic (~190 lines)
@@ -55,38 +55,43 @@ The application is a modular Swift CLI tool organized into separate concerns:
    - Thread-safe completion tracking using NSLock
    - Completion callback signals when both tracks finish
 
-3. **ScreenCapture.swift** - Screenshot logic (64 lines)
-   - Manages screenshot timing based on frame rate
-   - Reusable CIContext for efficient PNG rendering
-   - Tracks frame count and duration limits
-   - Writes numbered PNG files (capture_0.png, capture_1.png, etc.)
+3. **VideoWriter.swift** - Video encoding logic (~130 lines)
+   - AVAssetWriter-based H.264 hardware encoder for .mov output
+   - Accepts NV12 CMSampleBuffers directly from ScreenCaptureKit
+   - Configurable bitrate (default: 2 Mbps) and frame rate
+   - Sparse keyframe intervals (30,000 frames / 3,600 seconds) for minimal file size
+   - Thread-safe with NSLock for state management
+   - Factory method `create()` for proper error handling
 
-4. **StreamOutput.swift** - SCStream protocol coordination (~87 lines)
+4. **StreamOutput.swift** - SCStream protocol coordination (~100 lines)
    - Implements `SCStreamOutput` protocol
-   - Routes callbacks to ScreenCapture and AudioWriter instances
+   - Routes callbacks to VideoWriter and AudioWriter instances
    - Single AudioWriter instance handles both audio tracks natively
    - Semaphore signaling when audio recording finishes
+   - Completion method for finishing video writing
 
 ### Capture Flow
 
 1. Parse CLI arguments for frame rate, duration, and audio settings
 2. Discover the primary display using `SCShareableContent`
 3. Create `SCContentFilter` for the display
-4. Configure `SCStreamConfiguration` conditionally based on audio flag
-5. Initialize StreamOutput with ScreenCapture and AudioWriter instances
+4. Configure `SCStreamConfiguration` with NV12 pixel format and minimumFrameInterval
+5. Initialize StreamOutput with VideoWriter and AudioWriter instances
 6. Start capture and wait for completion (audio-driven, timer, or indefinite)
-7. AudioWriter writes both tracks to single audio.m4a file natively
-8. Stop capture and exit
+7. Stop capture and finish video writing to capture.mov
+8. AudioWriter writes both tracks to single audio.m4a file natively
+9. Exit
 
 ## Key Technical Details
 
 - **Platform**: macOS 15.0+ required
 - **Swift version**: 6.1
+- **Video format**: H.264 in .mov container with NV12 pixel format, sRGB color space
+- **Video encoding**: Hardware H.264 (2 Mbps default bitrate, sparse keyframes)
 - **Audio format**: M4A with AAC codec (64 kbps per track, 48kHz, mono tracks)
-- **Image format**: PNG with sRGB color space
-- **Frameworks used**: ScreenCaptureKit, AVFoundation, CoreImage, CoreMedia, ArgumentParser
+- **Frameworks used**: ScreenCaptureKit, AVFoundation, CoreMedia, ArgumentParser
 - **Output files**:
-  - `capture_N.png` - Numbered screenshots (N = 0, 1, 2, ...)
+  - `capture.mov` - H.264 video file
   - `audio.m4a` - Multi-track audio file with 2 separate tracks (system audio + microphone)
 - **CLI Options**:
   - `-r, --frame-rate` - Frame rate in Hz (default: 1.0)
@@ -105,12 +110,14 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 ## Development Notes
 
 - **Always run `make test` after code changes** to validate functionality and ensure tests pass
-- **Modular architecture**: Separate files for CLI, audio, screen capture, and stream coordination
+- **Modular architecture**: Separate files for CLI, audio, video encoding, and stream coordination
 - Classes use `@unchecked Sendable` with proper NSLock synchronization for thread safety
 - Audio writers are optional - only created when audio flag is enabled
-- Factory method pattern used for AudioWriter and StreamOutput initialization
+- Factory method pattern used for VideoWriter, AudioWriter, and StreamOutput initialization
 - Thread-safe access to shared state using NSLock for finish flags
-- Reusable CIContext in ScreenCapture for efficient screenshot rendering
+- NV12 pixel format minimizes conversion overhead before H.264 encoding
+- Hardware H.264 encoding for efficient, small video files
+- Sparse keyframe intervals (30,000 frames / 3,600 seconds) minimize file size
 - Microphone capture is conditionally enabled for macOS 15.0+ using `#available` checks
 - Supports three completion modes:
   - Audio-driven: waits for audio recording completion (with audio enabled)
@@ -121,8 +128,8 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 ## Testing
 
 The `make test` target validates:
-- Screenshot capture at 1 Hz produces 10 PNG files
-- PNG files are valid with correct dimensions
+- Video capture at 1 Hz produces capture.mov file
+- Video file is valid H.264 .mov format with correct duration
 - audio.m4a file is valid M4A format with 2 tracks (system audio + microphone)
 - Audio duration is within expected range (8-12 seconds)
 

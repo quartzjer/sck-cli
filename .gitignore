@@ -10,6 +10,7 @@ DerivedData/
 $PWD/
 .vscode/
 *.m4a
+*.mov
 *.flac
 *.caf
 Package.resolved

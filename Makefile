@@ -1,5 +1,5 @@
 # Makefile for sck-cli
-# A macOS screenshot capture CLI tool
+# A macOS video and audio capture CLI tool
 
 # Variables
 EXECUTABLE = sck-cli
@@ -53,7 +53,7 @@ clean:
 .PHONY: clean-output
 clean-output:
 	@echo "Cleaning capture outputs..."
-	rm -f capture_*.png audio.m4a
+	rm -f capture.mov audio.m4a
 	@echo "Output files cleaned."
 
 # Install to /usr/local/bin (requires sudo)
@@ -76,26 +76,44 @@ uninstall:
 test: build
 	@echo "Testing $(EXECUTABLE)..."
 	@echo "Cleaning up any previous test outputs..."
-	@rm -f capture_*.png audio.m4a
+	@rm -f capture.mov audio.m4a
 	@echo "Running capture (this will take ~10 seconds)..."
 	@$(DEBUG_BUILD)
 	@echo ""
 	@echo "Verifying outputs..."
 	@echo ""
-	@# Check for PNG screenshots (expecting ~10 files at 1Hz over 10 seconds)
-	@SCREENSHOT_COUNT=$$(ls -1 capture_*.png 2>/dev/null | wc -l | tr -d ' '); \
-	if [ $$SCREENSHOT_COUNT -lt 8 ]; then \
-		echo "❌ FAIL: Expected at least 8 screenshots, found $$SCREENSHOT_COUNT"; \
+	@# Check for video file exists
+	@if [ ! -f capture.mov ]; then \
+		echo "❌ FAIL: capture.mov not found"; \
+		exit 1; \
+	fi
+	@# Verify video file is valid QuickTime/MOV
+	@if file capture.mov | grep -q "ISO Media.*QuickTime"; then \
+		echo "✓ capture.mov exists and is valid .mov file"; \
+	else \
+		echo "❌ FAIL: capture.mov is not a valid .mov video file"; \
+		exit 1; \
+	fi
+	@# Verify video duration is ~10 seconds (8-12 second range)
+	@VIDEO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 capture.mov 2>/dev/null | cut -d. -f1); \
+	if [ -z "$$VIDEO_DURATION" ]; then \
+		echo "⚠ WARNING: Could not determine capture.mov duration (ffprobe not installed?)"; \
+	elif [ $$VIDEO_DURATION -lt 8 ] || [ $$VIDEO_DURATION -gt 12 ]; then \
+		echo "❌ FAIL: capture.mov duration is $$VIDEO_DURATION seconds (expected ~10)"; \
 		exit 1; \
 	else \
-		echo "✓ Found $$SCREENSHOT_COUNT screenshot(s)"; \
+		echo "✓ capture.mov duration is $$VIDEO_DURATION seconds"; \
 	fi
-	@# Verify first screenshot is valid PNG
-	@if file capture_0.png | grep -q "PNG image data"; then \
-		DIMENSIONS=$$(file capture_0.png | sed -n 's/.*PNG image data, \([0-9]* x [0-9]*\).*/\1/p'); \
-		echo "✓ capture_0.png is valid PNG ($$DIMENSIONS)"; \
+	@# Verify video codec is H.264 or HEVC
+	@VIDEO_CODEC=$$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 capture.mov 2>/dev/null); \
+	if [ -z "$$VIDEO_CODEC" ]; then \
+		echo "⚠ WARNING: Could not determine video codec (ffprobe not installed?)"; \
+	elif [ "$$VIDEO_CODEC" = "h264" ]; then \
+		echo "✓ Video codec is H.264"; \
+	elif [ "$$VIDEO_CODEC" = "hevc" ]; then \
+		echo "✓ Video codec is HEVC (H.265)"; \
 	else \
-		echo "❌ FAIL: capture_0.png is not a valid PNG file"; \
+		echo "❌ FAIL: Video codec is $$VIDEO_CODEC, expected h264 or hevc"; \
 		exit 1; \
 	fi
 	@# Check stereo audio file exists and is valid
@@ -143,7 +161,7 @@ help:
 	@echo "  make run-release  - Run the release executable directly"
 	@echo "  make test         - Run the tool and verify outputs are valid"
 	@echo "  make clean        - Remove all build artifacts"
-	@echo "  make clean-output - Remove captured screenshots and audio files"
+	@echo "  make clean-output - Remove captured video and audio files"
 	@echo "  make install      - Install to /usr/local/bin (may require sudo)"
 	@echo "  make uninstall    - Remove from /usr/local/bin"
 	@echo "  make help         - Show this help message"

@@ -3,6 +3,7 @@ import Foundation
 import ArgumentParser
 import Darwin
 import Dispatch
+import CoreMedia
 
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 @main
@@ -46,11 +47,15 @@ struct SCKShot: AsyncParsableCommand {
         // Build content filter for the chosen display
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
-        // Configure stream for screenshot and audio capture
+        // Configure stream for video and audio capture
         let cfg = SCStreamConfiguration()
         cfg.width  = display.width
         cfg.height = display.height
-        cfg.pixelFormat = kCVPixelFormatType_32BGRA
+        cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange // NV12
+        cfg.minimumFrameInterval = CMTimeMake(value: 1, timescale: Int32(frameRate))
+        cfg.colorSpaceName = CGColorSpace.sRGB
+        cfg.showsCursor = true
+        cfg.scalesToFit = false  // Avoid resampling - use exact captured size
         cfg.sampleRate = 48_000
         cfg.channelCount = 2
 
@@ -65,8 +70,9 @@ struct SCKShot: AsyncParsableCommand {
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
 
         guard let out = StreamOutput.create(
+            width: display.width,
+            height: display.height,
             frameRate: frameRate,
-            frames: frames,
             duration: captureDuration,
             captureAudio: audio
         ) else {
@@ -108,6 +114,20 @@ struct SCKShot: AsyncParsableCommand {
         await waitForCompletion(audio: audio, captureDuration: captureDuration, output: out)
 
         _ = try? await stream.stopCapture()
+
+        // Finish video writing
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            out.finishVideo { result in
+                switch result {
+                case .success(let url):
+                    print("Video saved to \(url.path)")
+                case .failure(let error):
+                    fputs("Failed to finish video: \(error)\n", stderr)
+                }
+                cont.resume()
+            }
+        }
+
         Darwin.exit(0)
     }
 

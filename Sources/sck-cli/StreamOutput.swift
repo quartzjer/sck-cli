@@ -3,32 +3,34 @@ import Foundation
 import CoreMedia
 import Dispatch
 
-/// Coordinates screen and audio capture by implementing SCStreamOutput protocol
+/// Coordinates video and audio capture by implementing SCStreamOutput protocol
 final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     let sema = DispatchSemaphore(value: 0)
 
-    private let screenCapture: ScreenCapture
+    private let videoWriter: VideoWriter
     private let audioWriter: AudioWriter?
     private let captureAudio: Bool
 
     /// Creates a stream output coordinator
     /// - Parameters:
-    ///   - frameRate: Frame rate for screenshots
-    ///   - frames: Number of frames to capture
+    ///   - width: Video width in pixels
+    ///   - height: Video height in pixels
+    ///   - frameRate: Frame rate for video
     ///   - duration: Capture duration in seconds
     ///   - captureAudio: Whether to capture audio
-    /// - Returns: StreamOutput instance, or nil if audio writer creation fails
+    /// - Returns: StreamOutput instance, or nil if writer creation fails
     static func create(
+        width: Int,
+        height: Int,
         frameRate: Double,
-        frames: Int,
         duration: Double?,
         captureAudio: Bool
     ) -> StreamOutput? {
-        var writer: AudioWriter? = nil
+        var audioWriter: AudioWriter? = nil
 
         if captureAudio {
             do {
-                writer = try AudioWriter.create(
+                audioWriter = try AudioWriter.create(
                     url: URL(fileURLWithPath: "audio.m4a"),
                     duration: duration
                 )
@@ -38,16 +40,28 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             }
         }
 
+        let videoWriter: VideoWriter
+        do {
+            videoWriter = try VideoWriter.create(
+                url: URL(fileURLWithPath: "capture.mov"),
+                width: width,
+                height: height,
+                frameRate: frameRate,
+                duration: duration
+            )
+        } catch {
+            fputs("Failed to create video writer: \(error)\n", stderr)
+            return nil
+        }
+
         let output = StreamOutput(
-            frameRate: frameRate,
-            frames: frames,
-            duration: duration,
+            videoWriter: videoWriter,
             captureAudio: captureAudio,
-            audioWriter: writer
+            audioWriter: audioWriter
         )
 
         // Wire up completion callback
-        writer?.onComplete = { [weak output] in
+        audioWriter?.onComplete = { [weak output] in
             output?.sema.signal()
         }
 
@@ -55,13 +69,11 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     private init(
-        frameRate: Double,
-        frames: Int,
-        duration: Double?,
+        videoWriter: VideoWriter,
         captureAudio: Bool,
         audioWriter: AudioWriter?
     ) {
-        self.screenCapture = ScreenCapture(frameRate: frameRate, frames: frames, duration: duration)
+        self.videoWriter = videoWriter
         self.captureAudio = captureAudio
         self.audioWriter = audioWriter
         super.init()
@@ -71,8 +83,7 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of outputType: SCStreamOutputType) {
         switch outputType {
         case .screen:
-            guard let imgBuf = sb.imageBuffer else { return }
-            screenCapture.captureFrame(imgBuf)
+            videoWriter.appendFrame(sb)
 
         case .audio:
             audioWriter?.appendSystemAudio(sb)
@@ -83,5 +94,11 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         default:
             return
         }
+    }
+
+    /// Finishes video writing
+    /// - Parameter completion: Callback with result
+    func finishVideo(completion: @escaping (Result<URL, Error>) -> Void) {
+        videoWriter.finish(completion: completion)
     }
 }
