@@ -14,3 +14,4 @@ $PWD/
 *.flac
 *.caf
 Package.resolved
+tmp/

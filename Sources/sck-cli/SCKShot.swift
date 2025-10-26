@@ -5,6 +5,38 @@ import Darwin
 import Dispatch
 import CoreMedia
 
+/// Delegate to monitor SCStream lifecycle and errors
+final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
+    private let verbose: Bool
+    private let completionSemaphore: DispatchSemaphore
+
+    init(verbose: Bool, completionSemaphore: DispatchSemaphore) {
+        self.verbose = verbose
+        self.completionSemaphore = completionSemaphore
+        super.init()
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        let nsError = error as NSError
+
+        // Check for "display unavailable" error (typically from sleep)
+        if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3815 {
+            print("\n[INFO] Display became unavailable (system sleep?) - finishing capture with recorded data...")
+            if verbose {
+                fputs("[VERBOSE] Error -3815: Failed to find any displays or windows to capture\n", stderr)
+            }
+            // Signal completion to gracefully exit and save captured data
+            completionSemaphore.signal()
+        } else {
+            // Other errors - log but don't auto-exit
+            fputs("[ERROR] Stream stopped with error: \(error)\n", stderr)
+            if verbose {
+                fputs("[VERBOSE] Stream error details: \(error.localizedDescription)\n", stderr)
+            }
+        }
+    }
+}
+
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 @main
 struct SCKShot: AsyncParsableCommand {
@@ -28,6 +60,9 @@ struct SCKShot: AsyncParsableCommand {
 
     @Flag(name: .long, inversion: .prefixedNo, help: "Enable audio capture (system audio and microphone)")
     var audio: Bool = true
+
+    @Flag(name: .shortAndLong, help: "Enable verbose logging")
+    var verbose: Bool = false
 
     func run() async throws {
         let captureDuration = length
@@ -73,9 +108,7 @@ struct SCKShot: AsyncParsableCommand {
             cfg.microphoneCaptureDeviceID = nil  // nil uses default microphone
         }
 
-        // Create stream and output handler
-        let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
-
+        // Create output handler first (need its semaphore for delegate)
         guard let out = StreamOutput.create(
             videoURL: URL(fileURLWithPath: "\(outputBase).mov"),
             audioURL: URL(fileURLWithPath: "\(outputBase).m4a"),
@@ -83,11 +116,16 @@ struct SCKShot: AsyncParsableCommand {
             height: display.height,
             frameRate: frameRate,
             duration: captureDuration,
-            captureAudio: audio
+            captureAudio: audio,
+            verbose: verbose
         ) else {
             fputs("Failed to initialize output\n", stderr)
             Darwin.exit(1)
         }
+
+        // Create stream delegate and stream
+        let streamDelegate = StreamDelegate(verbose: verbose, completionSemaphore: out.sema)
+        let stream = SCStream(filter: filter, configuration: cfg, delegate: streamDelegate)
 
         // Add stream outputs
         do {
@@ -115,6 +153,10 @@ struct SCKShot: AsyncParsableCommand {
 
         // Start capture
         try? await stream.startCapture()
+
+        if verbose {
+            print("[VERBOSE] Stream started successfully - delegate monitoring for errors")
+        }
 
         // Print status message
         printStatusMessage(audio: audio, captureDuration: captureDuration, frameRate: frameRate)
