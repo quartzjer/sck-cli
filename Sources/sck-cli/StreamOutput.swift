@@ -1,7 +1,6 @@
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import CoreMedia
-import Darwin
 
 /// Handles video capture for a single display by implementing SCStreamOutput protocol
 final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
@@ -91,6 +90,8 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     let sema = DispatchSemaphore(value: 0)
     private let audioWriter: AudioWriter
     private let verbose: Bool
+    private var completed = false
+    private let completedLock = NSLock()
 
     // Verbose logging state
     private var systemAudioBufferCount: Int = 0
@@ -127,6 +128,9 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
         // Wire up completion callback
         audioWriter.onComplete = { [weak output] in
+            output?.completedLock.lock()
+            output?.completed = true
+            output?.completedLock.unlock()
             output?.sema.signal()
         }
 
@@ -181,5 +185,20 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         } else {
             lastAudioLogTime = now
         }
+    }
+
+    /// Finishes audio writing (for graceful shutdown)
+    /// Returns true if finish was initiated, false if already completed
+    func finish() -> Bool {
+        completedLock.lock()
+        let alreadyCompleted = completed
+        completedLock.unlock()
+
+        if alreadyCompleted {
+            return false
+        }
+
+        audioWriter.finishAllTracks()
+        return true
     }
 }

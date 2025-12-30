@@ -6,6 +6,23 @@ import Dispatch
 import CoreMedia
 import CoreGraphics
 
+// Global state for signal handling (must be accessible from C signal handler)
+// These are intentionally global mutable state for async-signal-safe access
+nonisolated(unsafe) private var globalAbortSemaphore: DispatchSemaphore?
+nonisolated(unsafe) private var signalReceived = false
+
+private func signalHandler(signal: Int32) {
+    if signalReceived {
+        // Second signal - restore default handler and re-raise for immediate termination
+        Darwin.signal(signal, SIG_DFL)
+        Darwin.raise(signal)
+    } else {
+        signalReceived = true
+        fputs("\nReceived signal \(signal), shutting down gracefully (send again to force quit)...\n", stderr)
+        globalAbortSemaphore?.signal()
+    }
+}
+
 /// JSONL output for a display source
 struct DisplayInfo: Codable {
     let type: String
@@ -135,8 +152,13 @@ struct SCKShot: AsyncParsableCommand {
         // Output JSONL metadata to stdout
         outputJSONL(displays: displays, videoPaths: videoPaths, audioPath: audio ? audioPath : nil, frameRate: frameRate)
 
-        // Shared abort semaphore - any stream error triggers abort
+        // Shared abort semaphore - any stream error or signal triggers abort
         let abortSemaphore = DispatchSemaphore(value: 0)
+
+        // Install signal handlers for graceful shutdown
+        globalAbortSemaphore = abortSemaphore
+        signal(SIGINT, signalHandler)
+        signal(SIGTERM, signalHandler)
 
         // Create audio output (attached to first display's stream)
         var audioOutput: AudioStreamOutput? = nil
@@ -243,6 +265,20 @@ struct SCKShot: AsyncParsableCommand {
         // Stop all streams
         for capture in captures {
             _ = try? await capture.stream.stopCapture()
+        }
+
+        // Finish audio writer (for graceful shutdown on signal)
+        if let ao = audioOutput {
+            let needsWait = ao.finish()
+            if needsWait {
+                // Wait for audio completion
+                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.global().async {
+                        ao.sema.wait()
+                        cont.resume()
+                    }
+                }
+            }
         }
 
         // Finish all video writers

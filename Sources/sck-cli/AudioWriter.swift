@@ -12,6 +12,7 @@ final class AudioWriter: @unchecked Sendable {
 
     private var sessionStarted = false
     private var firstAudioTime: CMTime?
+    private var lastMediaTime: CMTime?
     private var systemFinished = false
     private var microphoneFinished = false
     private let duration: Double?
@@ -96,16 +97,15 @@ final class AudioWriter: @unchecked Sendable {
         guard !finished else { return }
 
         // Start session on first buffer
+        finishLock.lock()
         if !sessionStarted {
-            finishLock.lock()
-            if !sessionStarted {
-                writer.startSession(atSourceTime: .zero)
-                sessionStarted = true
-                firstAudioTime = currentTime
-                fputs("Started audio recording at \(CMTimeGetSeconds(currentTime))\n", stderr)
-            }
-            finishLock.unlock()
+            writer.startSession(atSourceTime: .zero)
+            sessionStarted = true
+            firstAudioTime = currentTime
+            fputs("Started audio recording at \(CMTimeGetSeconds(currentTime))\n", stderr)
         }
+        lastMediaTime = currentTime
+        finishLock.unlock()
 
         guard let firstTime = firstAudioTime else { return }
         let mediaElapsed = CMTimeGetSeconds(CMTimeSubtract(currentTime, firstTime))
@@ -163,6 +163,36 @@ final class AudioWriter: @unchecked Sendable {
                 fputs("audio writer error: \(String(describing: self.writer.error))\n", stderr)
             }
             self.onComplete?()
+        }
+    }
+
+    /// Finishes all tracks and finalizes the writer (for graceful shutdown)
+    /// This is idempotent - safe to call even if tracks are already finishing
+    func finishAllTracks() {
+        finishLock.lock()
+        let systemAlreadyFinished = systemFinished
+        let micAlreadyFinished = microphoneFinished
+        let firstTime = firstAudioTime
+        let lastTime = lastMediaTime
+        if !systemFinished {
+            systemFinished = true
+            systemInput.markAsFinished()
+        }
+        if !microphoneFinished {
+            microphoneFinished = true
+            microphoneInput.markAsFinished()
+        }
+        finishLock.unlock()
+
+        // Only finalize if we actually marked something as finished
+        if !systemAlreadyFinished || !micAlreadyFinished {
+            let elapsed: Double
+            if let firstTime = firstTime, let lastTime = lastTime {
+                elapsed = CMTimeGetSeconds(CMTimeSubtract(lastTime, firstTime))
+            } else {
+                elapsed = 0
+            }
+            finalizeWriter(elapsed: elapsed)
         }
     }
 
