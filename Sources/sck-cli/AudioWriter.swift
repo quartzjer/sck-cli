@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreMedia
+import Darwin
 
 /// Manages audio capture and writing to M4A file with multiple tracks
 final class AudioWriter: @unchecked Sendable {
@@ -101,7 +102,7 @@ final class AudioWriter: @unchecked Sendable {
                 writer.startSession(atSourceTime: .zero)
                 sessionStarted = true
                 firstAudioTime = currentTime
-                print("Started audio recording at \(CMTimeGetSeconds(currentTime))")
+                fputs("Started audio recording at \(CMTimeGetSeconds(currentTime))\n", stderr)
             }
             finishLock.unlock()
         }
@@ -110,17 +111,15 @@ final class AudioWriter: @unchecked Sendable {
         let mediaElapsed = CMTimeGetSeconds(CMTimeSubtract(currentTime, firstTime))
 
         // Check if we should continue recording
-        if let duration = duration, mediaElapsed < duration {
-            // Still recording
-            if input.isReadyForMoreMediaData {
-                let adjustedTime = CMTimeSubtract(currentTime, firstTime)
-                if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
-                    input.append(retimedBuffer)
-                }
-            }
-        } else if duration != nil {
+        if let duration = duration, mediaElapsed >= duration {
             // Duration exceeded, finish this track
             onFinish(mediaElapsed)
+        } else if input.isReadyForMoreMediaData {
+            // Still recording (indefinite or within duration)
+            let adjustedTime = CMTimeSubtract(currentTime, firstTime)
+            if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
+                input.append(retimedBuffer)
+            }
         }
     }
 
@@ -129,7 +128,7 @@ final class AudioWriter: @unchecked Sendable {
         let alreadyFinished = systemFinished
         if !alreadyFinished {
             systemFinished = true
-            print("Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds")
+            fputs("Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds\n", stderr)
             systemInput.markAsFinished()
         }
         let bothFinished = systemFinished && microphoneFinished
@@ -145,7 +144,7 @@ final class AudioWriter: @unchecked Sendable {
         let alreadyFinished = microphoneFinished
         if !alreadyFinished {
             microphoneFinished = true
-            print("Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds")
+            fputs("Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds\n", stderr)
             microphoneInput.markAsFinished()
         }
         let bothFinished = systemFinished && microphoneFinished
@@ -159,9 +158,9 @@ final class AudioWriter: @unchecked Sendable {
     private func finalizeWriter(elapsed: Double) {
         writer.finishWriting { [weak self] in
             guard let self = self else { return }
-            print("wrote \(self.writer.outputURL.lastPathComponent) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)")
+            fputs("wrote \(self.writer.outputURL.lastPathComponent) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)\n", stderr)
             if self.writer.status == .failed {
-                print("audio writer error: \(String(describing: self.writer.error))")
+                fputs("audio writer error: \(String(describing: self.writer.error))\n", stderr)
             }
             self.onComplete?()
         }

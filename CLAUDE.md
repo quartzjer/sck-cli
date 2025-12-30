@@ -40,54 +40,10 @@ The application is a modular Swift CLI tool organized into separate concerns:
 
 ### Source Files (Sources/sck-cli/)
 
-1. **SCKShot.swift** - CLI entry point (~320 lines)
-   - Main struct using `@main` attribute with ArgumentParser
-   - Parses CLI arguments: frame rate, duration, audio flags, verbose mode
-   - Discovers all displays and creates one SCStream per display
-   - Orchestrates multiple VideoStreamOutput instances and single AudioStreamOutput
-   - Handles three completion modes: audio-driven, timer-driven, indefinite
-   - Aborts all captures if any stream encounters an error
-
-2. **AudioWriter.swift** - Audio capture logic (~190 lines)
-   - Manages single AVAssetWriter with two AVAssetWriterInput instances for multi-track M4A
-   - Writes system audio and microphone to separate tracks in a single file
-   - Handles audio buffer timing and retiming to start from zero
-   - Factory method `create()` for proper error handling
-   - Thread-safe completion tracking using NSLock
-   - Completion callback signals when both tracks finish
-
-3. **VideoWriter.swift** - Video encoding logic (~150 lines)
-   - AVAssetWriter-based HEVC hardware encoder for .mov output
-   - Accepts NV12 CMSampleBuffers directly from ScreenCaptureKit
-   - Configurable bitrate (default: 8 Mbps) and frame rate
-   - Sparse keyframe intervals (30,000 frames / 3,600 seconds) for minimal file size
-   - Thread-safe with NSLock for state management
-   - Factory method `create()` for proper error handling
-
-4. **StreamOutput.swift** - SCStream protocol implementations (~185 lines)
-   - **VideoStreamOutput**: Handles video capture for a single display
-     - Implements `SCStreamOutput` protocol for .screen type
-     - One instance per display, routes frames to its VideoWriter
-   - **AudioStreamOutput**: Handles audio capture (system + microphone)
-     - Implements `SCStreamOutput` protocol for .audio and .microphone types
-     - Single instance shared across all streams (attached to first display's stream)
-     - Semaphore signaling when audio recording finishes
-
-### Capture Flow
-
-1. Parse CLI arguments for frame rate, duration, and audio settings
-2. Discover all displays using `SCShareableContent`
-3. Check for existing output files (abort if any exist)
-4. Create single AudioStreamOutput for audio capture
-5. For each display:
-   - Create VideoStreamOutput with display-specific VideoWriter
-   - Create SCContentFilter and SCStreamConfiguration
-   - Create SCStream with StreamDelegate for error handling
-   - Attach audio outputs only to first display's stream
-6. Start all streams
-7. Wait for completion (audio-driven, timer, or abort signal)
-8. Stop all streams and finish all video writers
-9. Exit
+- **SCKShot.swift** - CLI entry point with ArgumentParser, display discovery, stream orchestration
+- **AudioWriter.swift** - Multi-track M4A writing with AVAssetWriter (system audio + microphone)
+- **VideoWriter.swift** - HEVC hardware encoding to .mov with AVAssetWriter
+- **StreamOutput.swift** - SCStreamOutput protocol implementations for video and audio capture
 
 ## Key Technical Details
 
@@ -106,6 +62,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
   - `-l, --length` - Duration in seconds
   - `--audio/--no-audio` - Enable/disable audio (default: enabled)
   - `-v, --verbose` - Enable verbose logging
+- **Output**: JSONL to stdout (one line per display, one for audio); all logging to stderr
 
 ## Permissions Required
 
@@ -117,33 +74,13 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 
 ## Development Notes
 
-- **Always run `make test` after code changes** to validate functionality and ensure tests pass
-- **Modular architecture**: Separate files for CLI, audio, video encoding, and stream coordination
-- Classes use `@unchecked Sendable` with proper NSLock synchronization for thread safety
-- Audio output is optional - only created when audio flag is enabled
-- Factory method pattern used for VideoWriter, AudioWriter, VideoStreamOutput, and AudioStreamOutput
-- Thread-safe access to shared state using NSLock for finish flags
-- NV12 pixel format minimizes conversion overhead before HEVC encoding
-- Hardware HEVC encoding for efficient, small video files
-- Sparse keyframe intervals (30,000 frames / 3,600 seconds) minimize file size
-- Microphone capture is conditionally enabled for macOS 15.0+ using `#available` checks
-- Supports three completion modes:
-  - Audio-driven: waits for audio recording completion (with audio enabled)
-  - Timer-driven: waits for specified duration (video-only mode)
-  - Indefinite: runs until user interrupts with Ctrl-C
-- Main file is named SCKShot.swift (not main.swift) to avoid Swift @main attribute conflicts
-- Multi-display support: One SCStream per display, abort-on-error for any stream failure
-
-## Testing
-
-The `make test` target validates:
-- Video capture at 1 Hz produces capture_<displayID>.mov file(s)
-- Each video file is valid HEVC .mov format with correct duration (~5 seconds)
-- capture.m4a file is valid M4A format with 2 tracks (system audio + microphone)
-- Audio duration is within expected range (4-7 seconds)
+- **Always run `make test` after code changes** to validate functionality
+- Classes use `@unchecked Sendable` with NSLock for thread safety
+- Factory method pattern for writer and output classes
+- One SCStream per display; audio attached to first display's stream only
+- Three completion modes: audio-driven, timer-driven, or indefinite (Ctrl-C)
 
 ## Dependencies
 
-- **ffmpeg**: Used only for testing to verify video codec and audio track count
+- **ffmpeg**: Used only for testing (not required at runtime)
   - Install via Homebrew: `brew install ffmpeg`
-  - Not required for runtime operation - AVFoundation handles all encoding natively

@@ -30,6 +30,12 @@ make build
 - `myrecording_<displayID>.mov` - HEVC video per display
 - `myrecording.m4a` - Audio (2 tracks: system + microphone)
 
+**JSONL output (stdout):**
+```json
+{"displayID":1,"filename":"myrecording_1.mov","frameRate":1,"height":1080,"type":"display","width":1920,"x":0,"y":0}
+{"channels":1,"filename":"myrecording.m4a","sampleRate":48000,"tracks":[{"name":"system"},{"name":"microphone"}],"type":"audio"}
+```
+
 **Options:**
 - `-l, --length <seconds>` - Capture duration
 - `-r, --frame-rate <Hz>` - Frame rate (default: 1.0)

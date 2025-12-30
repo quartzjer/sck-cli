@@ -4,6 +4,33 @@ import ArgumentParser
 import Darwin
 import Dispatch
 import CoreMedia
+import CoreGraphics
+
+/// JSONL output for a display source
+struct DisplayInfo: Codable {
+    let type: String
+    let displayID: UInt32
+    let width: Int
+    let height: Int
+    let x: Double
+    let y: Double
+    let frameRate: Double
+    let filename: String
+}
+
+/// JSONL output for audio source
+struct AudioInfo: Codable {
+    let type: String
+    let tracks: [AudioTrackInfo]
+    let sampleRate: Int
+    let channels: Int
+    let filename: String
+}
+
+/// Audio track metadata
+struct AudioTrackInfo: Codable {
+    let name: String
+}
 
 /// Holds all components for a single display's capture stream
 struct DisplayCapture: @unchecked Sendable {
@@ -31,7 +58,7 @@ final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
 
         // Check for "display unavailable" error (typically from sleep)
         if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3815 {
-            print("\n[INFO] Display \(displayID) became unavailable (system sleep?) - aborting capture...")
+            fputs("\n[INFO] Display \(displayID) became unavailable (system sleep?) - aborting capture...\n", stderr)
             if verbose {
                 fputs("[VERBOSE] Display \(displayID) error -3815: Failed to find any displays or windows to capture\n", stderr)
             }
@@ -46,7 +73,6 @@ final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
     }
 }
 
-@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 @main
 struct SCKShot: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -85,7 +111,7 @@ struct SCKShot: AsyncParsableCommand {
         }
 
         let displays = content.displays
-        print("Found \(displays.count) display(s)")
+        fputs("Found \(displays.count) display(s)\n", stderr)
 
         // Build list of video paths for all displays
         var videoPaths: [CGDirectDisplayID: String] = [:]
@@ -105,6 +131,9 @@ struct SCKShot: AsyncParsableCommand {
             fputs("Error: \(audioPath) already exists\n", stderr)
             Darwin.exit(1)
         }
+
+        // Output JSONL metadata to stdout
+        outputJSONL(displays: displays, videoPaths: videoPaths, audioPath: audio ? audioPath : nil, frameRate: frameRate)
 
         // Shared abort semaphore - any stream error triggers abort
         let abortSemaphore = DispatchSemaphore(value: 0)
@@ -189,7 +218,7 @@ struct SCKShot: AsyncParsableCommand {
                 delegate: delegate
             ))
 
-            print("  Display \(display.displayID): \(display.width)x\(display.height) → \(videoPath)")
+            fputs("  Display \(display.displayID): \(display.width)x\(display.height) → \(videoPath)\n", stderr)
         }
 
         // Start all streams
@@ -197,7 +226,7 @@ struct SCKShot: AsyncParsableCommand {
             do {
                 try await capture.stream.startCapture()
                 if verbose {
-                    print("[VERBOSE] Stream for display \(capture.displayID) started")
+                    fputs("[VERBOSE] Stream for display \(capture.displayID) started\n", stderr)
                 }
             } catch {
                 fputs("Failed to start capture for display \(capture.displayID): \(error)\n", stderr)
@@ -222,7 +251,7 @@ struct SCKShot: AsyncParsableCommand {
                 capture.videoOutput.finish { result in
                     switch result {
                     case .success(let url):
-                        print("Video saved to \(url.path)")
+                        fputs("Video saved to \(url.path)\n", stderr)
                     case .failure(let error):
                         fputs("Failed to finish video for display \(capture.displayID): \(error)\n", stderr)
                     }
@@ -240,18 +269,18 @@ struct SCKShot: AsyncParsableCommand {
         if audio {
             if let duration = captureDuration {
                 if #available(macOS 15.0, *) {
-                    print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with audio...")
+                    fputs("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with audio...\n", stderr)
                 } else {
-                    print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with system audio only...")
+                    fputs("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with system audio only...\n", stderr)
                 }
             } else {
-                print("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...")
+                fputs("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...\n", stderr)
             }
         } else {
             if let duration = captureDuration {
-                print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...")
+                fputs("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...\n", stderr)
             } else {
-                print("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
+                fputs("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...\n", stderr)
             }
         }
     }
@@ -281,11 +310,7 @@ struct SCKShot: AsyncParsableCommand {
             // Timer-driven completion for video-only, but also watch for abort
             await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                 DispatchQueue.global().async {
-                    let result = abortSemaphore.wait(timeout: .now() + duration)
-                    if result == .timedOut {
-                        // Normal completion
-                    }
-                    // Either way, we're done
+                    _ = abortSemaphore.wait(timeout: .now() + duration)
                     cont.resume()
                 }
             }
@@ -296,6 +321,47 @@ struct SCKShot: AsyncParsableCommand {
                     abortSemaphore.wait()
                     cont.resume()
                 }
+            }
+        }
+    }
+
+    /// Outputs JSONL to stdout for each display and audio source
+    private func outputJSONL(displays: [SCDisplay], videoPaths: [CGDirectDisplayID: String], audioPath: String?, frameRate: Double) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+
+        // Output one line per display
+        for display in displays {
+            let bounds = CGDisplayBounds(display.displayID)
+            let info = DisplayInfo(
+                type: "display",
+                displayID: display.displayID,
+                width: display.width,
+                height: display.height,
+                x: bounds.origin.x,
+                y: bounds.origin.y,
+                frameRate: frameRate,
+                filename: videoPaths[display.displayID] ?? ""
+            )
+            if let data = try? encoder.encode(info), let json = String(data: data, encoding: .utf8) {
+                print(json)
+            }
+        }
+
+        // Output audio info if enabled
+        if let audioPath = audioPath {
+            let info = AudioInfo(
+                type: "audio",
+                tracks: [
+                    AudioTrackInfo(name: "system"),
+                    AudioTrackInfo(name: "microphone")
+                ],
+                sampleRate: 48000,
+                channels: 1,
+                filename: audioPath
+            )
+            if let data = try? encoder.encode(info), let json = String(data: data, encoding: .utf8) {
+                print(json)
             }
         }
     }

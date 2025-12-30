@@ -110,12 +110,10 @@ test: build
 		VIDEO_CODEC=$$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$$VIDEO_FILE" 2>/dev/null); \
 		if [ -z "$$VIDEO_CODEC" ]; then \
 			echo "  ⚠ WARNING: Could not determine video codec (ffprobe not installed?)"; \
-		elif [ "$$VIDEO_CODEC" = "h264" ]; then \
-			echo "  ✓ Video codec is H.264"; \
 		elif [ "$$VIDEO_CODEC" = "hevc" ]; then \
-			echo "  ✓ Video codec is HEVC (H.265)"; \
+			echo "  ✓ Video codec is HEVC"; \
 		else \
-			echo "❌ FAIL: Video codec is $$VIDEO_CODEC, expected h264 or hevc"; \
+			echo "❌ FAIL: Video codec is $$VIDEO_CODEC, expected hevc"; \
 			exit 1; \
 		fi; \
 	done

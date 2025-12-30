@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import CoreMedia
-import Dispatch
+import Darwin
 
 /// Handles video capture for a single display by implementing SCStreamOutput protocol
 final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
@@ -74,7 +74,7 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             let pts = CMSampleBufferGetPresentationTimeStamp(sb)
             let timestamp = CMTimeGetSeconds(pts)
             logLock.unlock()
-            print("[VERBOSE] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s")
+            fputs("[VERBOSE] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s\n", stderr)
         }
         videoWriter.appendFrame(sb)
     }
@@ -173,7 +173,7 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let now = Date()
         if let lastLog = lastAudioLogTime {
             if now.timeIntervalSince(lastLog) >= 1.0 {
-                print("[VERBOSE] Audio buffers in last ~1s: system=\(systemAudioBufferCount), mic=\(microphoneBufferCount)")
+                fputs("[VERBOSE] Audio buffers in last ~1s: system=\(systemAudioBufferCount), mic=\(microphoneBufferCount)\n", stderr)
                 systemAudioBufferCount = 0
                 microphoneBufferCount = 0
                 lastAudioLogTime = now

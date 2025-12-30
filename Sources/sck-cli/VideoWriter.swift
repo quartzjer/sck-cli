@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreMedia
+import Darwin
 
 /// Manages video capture and .mov file writing using hardware HEVC encoding
 final class VideoWriter: @unchecked Sendable {
@@ -94,7 +95,7 @@ final class VideoWriter: @unchecked Sendable {
             captureStartTime = pts
             writer.startWriting()
             writer.startSession(atSourceTime: pts)
-            print("Started video recording to \(writer.outputURL.path)")
+            fputs("Started video recording to \(writer.outputURL.path)\n", stderr)
         }
 
         // Check duration limit if specified
