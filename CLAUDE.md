@@ -11,18 +11,18 @@ A lightweight macOS command-line tool that captures video and audio using Apple'
 ```bash
 # Build debug version (default)
 make build
-# or
-swift build
 
-# Build optimized release version
+# Build optimized release version (native architecture)
 make release
-# or
-swift build -c release
+
+# Build universal binary (arm64 + x86_64)
+make release-universal
+
+# Create distribution package (universal, stripped, zipped)
+make dist
 
 # Run the tool with default settings (builds if needed)
 make run
-# or
-swift run sck-cli
 
 # Run comprehensive tests
 make test
@@ -30,8 +30,14 @@ make test
 # Clean build artifacts
 make clean
 
+# Clean distribution artifacts only
+make clean-dist
+
 # Clean captured output files (video and audio)
 make clean-output
+
+# Install universal binary to /usr/local/bin
+make install
 ```
 
 ## Architecture

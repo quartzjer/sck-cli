@@ -4,8 +4,15 @@
 # Variables
 EXECUTABLE = sck-cli
 BUILD_DIR = .build
-DEBUG_BUILD = $(BUILD_DIR)/debug/$(EXECUTABLE)
-RELEASE_BUILD = $(BUILD_DIR)/release/$(EXECUTABLE)
+DEBUG_BUILD = $(BUILD_DIR)/arm64-apple-macosx/debug/$(EXECUTABLE)
+RELEASE_BUILD = $(BUILD_DIR)/arm64-apple-macosx/release/$(EXECUTABLE)
+
+# Distribution variables
+VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
+X86_64_BUILD = $(BUILD_DIR)/x86_64-apple-macosx/release/$(EXECUTABLE)
+UNIVERSAL_DIR = $(BUILD_DIR)/universal
+UNIVERSAL_BUILD = $(UNIVERSAL_DIR)/$(EXECUTABLE)
+DIST_DIR = dist
 
 # Default target
 .PHONY: all
@@ -17,11 +24,58 @@ build:
 	@echo "Building $(EXECUTABLE) in debug mode..."
 	swift build
 
-# Build in release mode (optimized)
+# Build in release mode (optimized, native architecture)
 .PHONY: release
 release:
 	@echo "Building $(EXECUTABLE) in release mode..."
 	swift build -c release
+
+# Build universal binary (arm64 + x86_64)
+.PHONY: release-universal
+release-universal:
+	@echo "Building $(EXECUTABLE) universal binary..."
+	@echo "  Building for arm64..."
+	swift build -c release --arch arm64
+	@echo "  Building for x86_64..."
+	swift build -c release --arch x86_64
+	@mkdir -p $(UNIVERSAL_DIR)
+	@# Verify both architecture builds exist
+	@test -f $(RELEASE_BUILD) || (echo "ERROR: arm64 build not found at $(RELEASE_BUILD)" && exit 1)
+	@test -f $(X86_64_BUILD) || (echo "ERROR: x86_64 build not found at $(X86_64_BUILD)" && exit 1)
+	@echo "  Creating universal binary with lipo..."
+	lipo -create -output $(UNIVERSAL_BUILD) $(RELEASE_BUILD) $(X86_64_BUILD)
+	@echo "Universal binary created: $(UNIVERSAL_BUILD)"
+	@lipo -info $(UNIVERSAL_BUILD)
+
+# Create distribution package (universal, stripped, zipped)
+.PHONY: dist
+dist: release-universal
+	@echo "Creating distribution package..."
+	@mkdir -p $(DIST_DIR)
+	@# Strip symbols from a copy of the universal binary
+	@cp $(UNIVERSAL_BUILD) $(DIST_DIR)/$(EXECUTABLE)
+	@echo "  Stripping symbols..."
+	strip -x $(DIST_DIR)/$(EXECUTABLE)
+	@# Show size comparison
+	@echo "  Size before strip: $$(ls -lh $(UNIVERSAL_BUILD) | awk '{print $$5}')"
+	@echo "  Size after strip:  $$(ls -lh $(DIST_DIR)/$(EXECUTABLE) | awk '{print $$5}')"
+	@# Create versioned zip archive
+	@echo "  Creating archive..."
+	@cd $(DIST_DIR) && zip -q $(EXECUTABLE)-$(VERSION).zip $(EXECUTABLE)
+	@rm $(DIST_DIR)/$(EXECUTABLE)
+	@# Generate SHA256 checksum
+	@shasum -a 256 $(DIST_DIR)/$(EXECUTABLE)-$(VERSION).zip > $(DIST_DIR)/$(EXECUTABLE)-$(VERSION).zip.sha256
+	@echo ""
+	@echo "Distribution package ready:"
+	@echo "  $(DIST_DIR)/$(EXECUTABLE)-$(VERSION).zip"
+	@cat $(DIST_DIR)/$(EXECUTABLE)-$(VERSION).zip.sha256
+
+# Clean distribution artifacts
+.PHONY: clean-dist
+clean-dist:
+	@echo "Cleaning distribution artifacts..."
+	rm -rf $(DIST_DIR) $(UNIVERSAL_DIR)
+	@echo "Distribution artifacts cleaned."
 
 # Run the tool (builds if needed)
 .PHONY: run
@@ -46,7 +100,7 @@ run-release: release
 clean:
 	@echo "Cleaning build artifacts..."
 	swift package clean
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(DIST_DIR)
 	@echo "Clean complete."
 
 # Clean captured output files
@@ -58,10 +112,10 @@ clean-output:
 
 # Install to /usr/local/bin (requires sudo)
 .PHONY: install
-install: release
+install: release-universal
 	@echo "Installing $(EXECUTABLE) to /usr/local/bin..."
 	@echo "Note: This may require administrator privileges."
-	cp $(RELEASE_BUILD) /usr/local/bin/$(EXECUTABLE)
+	cp $(UNIVERSAL_BUILD) /usr/local/bin/$(EXECUTABLE)
 	@echo "Installation complete. You can now run '$(EXECUTABLE)' from anywhere."
 
 # Uninstall from /usr/local/bin
@@ -155,14 +209,24 @@ test: build
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  make build        - Build the project in debug mode (default)"
-	@echo "  make release      - Build the project in release mode"
-	@echo "  make run          - Build and run the tool"
-	@echo "  make run-debug    - Run the debug executable directly"
-	@echo "  make run-release  - Run the release executable directly"
-	@echo "  make test         - Run the tool and verify outputs are valid"
-	@echo "  make clean        - Remove all build artifacts"
-	@echo "  make clean-output - Remove captured video and audio files"
-	@echo "  make install      - Install to /usr/local/bin (may require sudo)"
-	@echo "  make uninstall    - Remove from /usr/local/bin"
-	@echo "  make help         - Show this help message"
+	@echo ""
+	@echo "  Development:"
+	@echo "    make build           - Build in debug mode (default)"
+	@echo "    make release         - Build in release mode (native arch)"
+	@echo "    make run             - Build and run the tool"
+	@echo "    make run-debug       - Run the debug executable directly"
+	@echo "    make run-release     - Run the release executable directly"
+	@echo "    make test            - Run the tool and verify outputs"
+	@echo ""
+	@echo "  Distribution:"
+	@echo "    make release-universal - Build universal binary (arm64 + x86_64)"
+	@echo "    make dist            - Create distribution package (stripped + zipped)"
+	@echo ""
+	@echo "  Cleanup:"
+	@echo "    make clean           - Remove all build artifacts"
+	@echo "    make clean-dist      - Remove distribution artifacts only"
+	@echo "    make clean-output    - Remove captured video/audio files"
+	@echo ""
+	@echo "  Installation:"
+	@echo "    make install         - Install to /usr/local/bin (may require sudo)"
+	@echo "    make uninstall       - Remove from /usr/local/bin"
