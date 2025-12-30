@@ -1,13 +1,11 @@
 import Foundation
 import AVFoundation
 import CoreMedia
-import CoreVideo
 
-/// Manages video capture and .mov file writing using hardware H.264 encoding
+/// Manages video capture and .mov file writing using hardware HEVC encoding
 final class VideoWriter: @unchecked Sendable {
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
-    private let frameRate: Double
     private let captureDuration: Double?
 
     private var started = false
@@ -21,7 +19,7 @@ final class VideoWriter: @unchecked Sendable {
     ///   - height: Video height in pixels
     ///   - frameRate: Frame rate in Hz
     ///   - duration: Maximum duration in seconds (nil for indefinite)
-    ///   - bitrate: Target bitrate in bits per second (default: 2 Mbps)
+    ///   - bitrate: Target bitrate in bits per second (default: 8 Mbps)
     /// - Throws: Error if writer cannot be created
     static func create(
         url: URL,
@@ -68,7 +66,6 @@ final class VideoWriter: @unchecked Sendable {
         return VideoWriter(
             writer: writer,
             videoInput: videoInput,
-            frameRate: frameRate,
             duration: duration
         )
     }
@@ -76,12 +73,10 @@ final class VideoWriter: @unchecked Sendable {
     private init(
         writer: AVAssetWriter,
         videoInput: AVAssetWriterInput,
-        frameRate: Double,
         duration: Double?
     ) {
         self.writer = writer
         self.videoInput = videoInput
-        self.frameRate = frameRate
         self.captureDuration = duration
     }
 

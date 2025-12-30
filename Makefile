@@ -53,7 +53,7 @@ clean:
 .PHONY: clean-output
 clean-output:
 	@echo "Cleaning capture outputs..."
-	rm -f capture.mov capture.m4a
+	rm -f capture_*.mov capture.m4a
 	@echo "Output files cleaned."
 
 # Install to /usr/local/bin (requires sudo)
@@ -76,47 +76,50 @@ uninstall:
 test: build
 	@echo "Testing $(EXECUTABLE)..."
 	@echo "Cleaning up any previous test outputs..."
-	@rm -f capture.mov capture.m4a
+	@rm -f capture_*.mov capture.m4a
 	@echo "Running capture (this will take ~5 seconds)..."
 	@$(DEBUG_BUILD) capture --length 5
 	@echo ""
 	@echo "Verifying outputs..."
 	@echo ""
-	@# Check for video file exists
-	@if [ ! -f capture.mov ]; then \
-		echo "❌ FAIL: capture.mov not found"; \
-		exit 1; \
-	fi
-	@# Verify video file is valid QuickTime/MOV
-	@if file capture.mov | grep -q "ISO Media.*QuickTime"; then \
-		echo "✓ capture.mov exists and is valid .mov file"; \
-	else \
-		echo "❌ FAIL: capture.mov is not a valid .mov video file"; \
-		exit 1; \
-	fi
-	@# Verify video duration is ~5 seconds (4-7 second range)
-	@VIDEO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 capture.mov 2>/dev/null | cut -d. -f1); \
-	if [ -z "$$VIDEO_DURATION" ]; then \
-		echo "⚠ WARNING: Could not determine capture.mov duration (ffprobe not installed?)"; \
-	elif [ $$VIDEO_DURATION -lt 4 ] || [ $$VIDEO_DURATION -gt 7 ]; then \
-		echo "❌ FAIL: capture.mov duration is $$VIDEO_DURATION seconds (expected ~5)"; \
+	@# Check for at least one video file with displayID naming
+	@VIDEO_FILES=$$(ls capture_*.mov 2>/dev/null | wc -l | tr -d ' '); \
+	if [ "$$VIDEO_FILES" -eq 0 ]; then \
+		echo "❌ FAIL: No capture_<displayID>.mov files found"; \
 		exit 1; \
 	else \
-		echo "✓ capture.mov duration is $$VIDEO_DURATION seconds"; \
+		echo "✓ Found $$VIDEO_FILES video file(s)"; \
 	fi
-	@# Verify video codec is H.264 or HEVC
-	@VIDEO_CODEC=$$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 capture.mov 2>/dev/null); \
-	if [ -z "$$VIDEO_CODEC" ]; then \
-		echo "⚠ WARNING: Could not determine video codec (ffprobe not installed?)"; \
-	elif [ "$$VIDEO_CODEC" = "h264" ]; then \
-		echo "✓ Video codec is H.264"; \
-	elif [ "$$VIDEO_CODEC" = "hevc" ]; then \
-		echo "✓ Video codec is HEVC (H.265)"; \
-	else \
-		echo "❌ FAIL: Video codec is $$VIDEO_CODEC, expected h264 or hevc"; \
-		exit 1; \
-	fi
-	@# Check stereo audio file exists and is valid
+	@# Verify each video file
+	@for VIDEO_FILE in capture_*.mov; do \
+		echo "Checking $$VIDEO_FILE..."; \
+		if ! file "$$VIDEO_FILE" | grep -q "ISO Media.*QuickTime"; then \
+			echo "❌ FAIL: $$VIDEO_FILE is not a valid .mov video file"; \
+			exit 1; \
+		fi; \
+		echo "  ✓ Valid .mov file"; \
+		VIDEO_DURATION=$$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$$VIDEO_FILE" 2>/dev/null | cut -d. -f1); \
+		if [ -z "$$VIDEO_DURATION" ]; then \
+			echo "  ⚠ WARNING: Could not determine duration (ffprobe not installed?)"; \
+		elif [ $$VIDEO_DURATION -lt 4 ] || [ $$VIDEO_DURATION -gt 7 ]; then \
+			echo "❌ FAIL: $$VIDEO_FILE duration is $$VIDEO_DURATION seconds (expected ~5)"; \
+			exit 1; \
+		else \
+			echo "  ✓ Duration is $$VIDEO_DURATION seconds"; \
+		fi; \
+		VIDEO_CODEC=$$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$$VIDEO_FILE" 2>/dev/null); \
+		if [ -z "$$VIDEO_CODEC" ]; then \
+			echo "  ⚠ WARNING: Could not determine video codec (ffprobe not installed?)"; \
+		elif [ "$$VIDEO_CODEC" = "h264" ]; then \
+			echo "  ✓ Video codec is H.264"; \
+		elif [ "$$VIDEO_CODEC" = "hevc" ]; then \
+			echo "  ✓ Video codec is HEVC (H.265)"; \
+		else \
+			echo "❌ FAIL: Video codec is $$VIDEO_CODEC, expected h264 or hevc"; \
+			exit 1; \
+		fi; \
+	done
+	@# Check audio file exists and is valid
 	@if [ ! -f capture.m4a ]; then \
 		echo "❌ FAIL: capture.m4a not found"; \
 		exit 1; \

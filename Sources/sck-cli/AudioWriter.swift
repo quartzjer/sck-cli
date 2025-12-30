@@ -68,7 +68,7 @@ final class AudioWriter: @unchecked Sendable {
     /// Appends a system audio buffer to the writer
     /// - Parameter sampleBuffer: Audio sample buffer from SCStream
     func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
-        append(sampleBuffer, to: systemInput, trackName: "system audio") { [weak self] elapsed in
+        append(sampleBuffer, to: systemInput) { [weak self] elapsed in
             self?.finishSystemAudio(elapsed: elapsed)
         }
     }
@@ -76,7 +76,7 @@ final class AudioWriter: @unchecked Sendable {
     /// Appends a microphone audio buffer to the writer
     /// - Parameter sampleBuffer: Audio sample buffer from SCStream
     func appendMicrophone(_ sampleBuffer: CMSampleBuffer) {
-        append(sampleBuffer, to: microphoneInput, trackName: "microphone") { [weak self] elapsed in
+        append(sampleBuffer, to: microphoneInput) { [weak self] elapsed in
             self?.finishMicrophone(elapsed: elapsed)
         }
     }
@@ -84,7 +84,6 @@ final class AudioWriter: @unchecked Sendable {
     private func append(
         _ sampleBuffer: CMSampleBuffer,
         to input: AVAssetWriterInput,
-        trackName: String,
         onFinish: @escaping (Double) -> Void
     ) {
         let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)

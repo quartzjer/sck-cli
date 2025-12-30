@@ -3,57 +3,35 @@ import Foundation
 import CoreMedia
 import Dispatch
 
-/// Coordinates video and audio capture by implementing SCStreamOutput protocol
-final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
-    let sema = DispatchSemaphore(value: 0)
-
+/// Handles video capture for a single display by implementing SCStreamOutput protocol
+final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
+    let displayID: CGDirectDisplayID
     private let videoWriter: VideoWriter
-    private let audioWriter: AudioWriter?
-    private let captureAudio: Bool
     private let verbose: Bool
 
     // Verbose logging state
     private var frameCount: Int = 0
-    private var systemAudioBufferCount: Int = 0
-    private var microphoneBufferCount: Int = 0
-    private var lastAudioLogTime: Date?
     private let logLock = NSLock()
 
-    /// Creates a stream output coordinator
+    /// Creates a video stream output for a single display
     /// - Parameters:
+    ///   - displayID: The display ID this output handles
     ///   - videoURL: Output URL for video file
-    ///   - audioURL: Output URL for audio file
     ///   - width: Video width in pixels
     ///   - height: Video height in pixels
     ///   - frameRate: Frame rate for video
     ///   - duration: Capture duration in seconds
-    ///   - captureAudio: Whether to capture audio
     ///   - verbose: Enable verbose logging
-    /// - Returns: StreamOutput instance, or nil if writer creation fails
+    /// - Returns: VideoStreamOutput instance, or nil if writer creation fails
     static func create(
+        displayID: CGDirectDisplayID,
         videoURL: URL,
-        audioURL: URL,
         width: Int,
         height: Int,
         frameRate: Double,
         duration: Double?,
-        captureAudio: Bool,
         verbose: Bool
-    ) -> StreamOutput? {
-        var audioWriter: AudioWriter? = nil
-
-        if captureAudio {
-            do {
-                audioWriter = try AudioWriter.create(
-                    url: audioURL,
-                    duration: duration
-                )
-            } catch {
-                fputs("Failed to create audio writer: \(error)\n", stderr)
-                return nil
-            }
-        }
-
+    ) -> VideoStreamOutput? {
         let videoWriter: VideoWriter
         do {
             videoWriter = try VideoWriter.create(
@@ -64,19 +42,91 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 duration: duration
             )
         } catch {
-            fputs("Failed to create video writer: \(error)\n", stderr)
+            fputs("Failed to create video writer for display \(displayID): \(error)\n", stderr)
             return nil
         }
 
-        let output = StreamOutput(
+        return VideoStreamOutput(
+            displayID: displayID,
             videoWriter: videoWriter,
-            captureAudio: captureAudio,
+            verbose: verbose
+        )
+    }
+
+    private init(
+        displayID: CGDirectDisplayID,
+        videoWriter: VideoWriter,
+        verbose: Bool
+    ) {
+        self.displayID = displayID
+        self.videoWriter = videoWriter
+        self.verbose = verbose
+        super.init()
+    }
+
+    /// SCStreamOutput callback for handling captured video frames
+    func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of outputType: SCStreamOutputType) {
+        guard outputType == .screen else { return }
+
+        if verbose {
+            logLock.lock()
+            frameCount += 1
+            let pts = CMSampleBufferGetPresentationTimeStamp(sb)
+            let timestamp = CMTimeGetSeconds(pts)
+            logLock.unlock()
+            print("[VERBOSE] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s")
+        }
+        videoWriter.appendFrame(sb)
+    }
+
+    /// Finishes video writing
+    /// - Parameter completion: Callback with result
+    func finish(completion: @escaping (Result<URL, Error>) -> Void) {
+        videoWriter.finish(completion: completion)
+    }
+}
+
+/// Handles audio capture (system audio + microphone) by implementing SCStreamOutput protocol
+final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
+    let sema = DispatchSemaphore(value: 0)
+    private let audioWriter: AudioWriter
+    private let verbose: Bool
+
+    // Verbose logging state
+    private var systemAudioBufferCount: Int = 0
+    private var microphoneBufferCount: Int = 0
+    private var lastAudioLogTime: Date?
+    private let logLock = NSLock()
+
+    /// Creates an audio stream output
+    /// - Parameters:
+    ///   - audioURL: Output URL for audio file
+    ///   - duration: Capture duration in seconds
+    ///   - verbose: Enable verbose logging
+    /// - Returns: AudioStreamOutput instance, or nil if writer creation fails
+    static func create(
+        audioURL: URL,
+        duration: Double?,
+        verbose: Bool
+    ) -> AudioStreamOutput? {
+        let audioWriter: AudioWriter
+        do {
+            audioWriter = try AudioWriter.create(
+                url: audioURL,
+                duration: duration
+            )
+        } catch {
+            fputs("Failed to create audio writer: \(error)\n", stderr)
+            return nil
+        }
+
+        let output = AudioStreamOutput(
             audioWriter: audioWriter,
             verbose: verbose
         )
 
         // Wire up completion callback
-        audioWriter?.onComplete = { [weak output] in
+        audioWriter.onComplete = { [weak output] in
             output?.sema.signal()
         }
 
@@ -84,32 +134,17 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     private init(
-        videoWriter: VideoWriter,
-        captureAudio: Bool,
-        audioWriter: AudioWriter?,
+        audioWriter: AudioWriter,
         verbose: Bool
     ) {
-        self.videoWriter = videoWriter
-        self.captureAudio = captureAudio
         self.audioWriter = audioWriter
         self.verbose = verbose
         super.init()
     }
 
-    /// SCStreamOutput callback for handling captured frames and audio
+    /// SCStreamOutput callback for handling captured audio
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of outputType: SCStreamOutputType) {
         switch outputType {
-        case .screen:
-            if verbose {
-                logLock.lock()
-                frameCount += 1
-                let pts = CMSampleBufferGetPresentationTimeStamp(sb)
-                let timestamp = CMTimeGetSeconds(pts)
-                logLock.unlock()
-                print("[VERBOSE] Frame #\(frameCount) received at \(String(format: "%.3f", timestamp))s")
-            }
-            videoWriter.appendFrame(sb)
-
         case .audio:
             if verbose {
                 logLock.lock()
@@ -117,7 +152,7 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 logAudioBuffersIfNeeded()
                 logLock.unlock()
             }
-            audioWriter?.appendSystemAudio(sb)
+            audioWriter.appendSystemAudio(sb)
 
         case .microphone:
             if verbose {
@@ -126,7 +161,7 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 logAudioBuffersIfNeeded()
                 logLock.unlock()
             }
-            audioWriter?.appendMicrophone(sb)
+            audioWriter.appendMicrophone(sb)
 
         default:
             return
@@ -146,11 +181,5 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         } else {
             lastAudioLogTime = now
         }
-    }
-
-    /// Finishes video writing
-    /// - Parameter completion: Callback with result
-    func finishVideo(completion: @escaping (Result<URL, Error>) -> Void) {
-        videoWriter.finish(completion: completion)
     }
 }

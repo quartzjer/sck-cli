@@ -5,14 +5,24 @@ import Darwin
 import Dispatch
 import CoreMedia
 
-/// Delegate to monitor SCStream lifecycle and errors
+/// Holds all components for a single display's capture stream
+struct DisplayCapture: @unchecked Sendable {
+    let displayID: CGDirectDisplayID
+    let stream: SCStream
+    let videoOutput: VideoStreamOutput
+    let delegate: StreamDelegate
+}
+
+/// Delegate to monitor SCStream lifecycle and errors - signals abort on any error
 final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
     private let verbose: Bool
-    private let completionSemaphore: DispatchSemaphore
+    private let displayID: CGDirectDisplayID
+    private let abortSemaphore: DispatchSemaphore
 
-    init(verbose: Bool, completionSemaphore: DispatchSemaphore) {
+    init(verbose: Bool, displayID: CGDirectDisplayID, abortSemaphore: DispatchSemaphore) {
         self.verbose = verbose
-        self.completionSemaphore = completionSemaphore
+        self.displayID = displayID
+        self.abortSemaphore = abortSemaphore
         super.init()
     }
 
@@ -21,19 +31,18 @@ final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
 
         // Check for "display unavailable" error (typically from sleep)
         if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3815 {
-            print("\n[INFO] Display became unavailable (system sleep?) - finishing capture with recorded data...")
+            print("\n[INFO] Display \(displayID) became unavailable (system sleep?) - aborting capture...")
             if verbose {
-                fputs("[VERBOSE] Error -3815: Failed to find any displays or windows to capture\n", stderr)
+                fputs("[VERBOSE] Display \(displayID) error -3815: Failed to find any displays or windows to capture\n", stderr)
             }
-            // Signal completion to gracefully exit and save captured data
-            completionSemaphore.signal()
         } else {
-            // Other errors - log but don't auto-exit
-            fputs("[ERROR] Stream stopped with error: \(error)\n", stderr)
+            fputs("[ERROR] Display \(displayID) stream stopped with error: \(error)\n", stderr)
             if verbose {
-                fputs("[VERBOSE] Stream error details: \(error.localizedDescription)\n", stderr)
+                fputs("[VERBOSE] Display \(displayID) error details: \(error.localizedDescription)\n", stderr)
             }
         }
+        // Signal abort for any stream error
+        abortSemaphore.signal()
     }
 }
 
@@ -44,12 +53,13 @@ struct SCKShot: AsyncParsableCommand {
         commandName: "sck-cli",
         abstract: "Capture video and audio using ScreenCaptureKit",
         discussion: """
-        Captures screen video at a specified frame rate and optionally records system audio and microphone input.
-        Requires an output filename. Specify duration with --length in seconds.
+        Captures screen video from all displays at a specified frame rate and optionally records system audio and microphone input.
+        Creates one video file per display: <output>_<displayID>.mov
+        Creates one audio file: <output>.m4a
         """
     )
 
-    @Argument(help: "Output base filename (e.g., 'capture' creates capture.mov and capture.m4a)")
+    @Argument(help: "Output base filename (e.g., 'capture' creates capture_<displayID>.mov and capture.m4a)")
     var outputBase: String
 
     @Option(name: [.customShort("r"), .long], help: "Frame rate in Hz (frames per second)")
@@ -67,156 +77,226 @@ struct SCKShot: AsyncParsableCommand {
     func run() async throws {
         let captureDuration = length
 
-        // Check for existing output files
-        let videoPath = "\(outputBase).mov"
-        let audioPath = "\(outputBase).m4a"
-        if FileManager.default.fileExists(atPath: videoPath) {
-            fputs("Error: \(videoPath) already exists\n", stderr)
+        // Discover all displays
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+              !content.displays.isEmpty else {
+            fputs("No displays found\n", stderr)
             Darwin.exit(1)
         }
+
+        let displays = content.displays
+        print("Found \(displays.count) display(s)")
+
+        // Build list of video paths for all displays
+        var videoPaths: [CGDirectDisplayID: String] = [:]
+        for display in displays {
+            videoPaths[display.displayID] = "\(outputBase)_\(display.displayID).mov"
+        }
+
+        // Check for existing output files
+        for (_, path) in videoPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                fputs("Error: \(path) already exists\n", stderr)
+                Darwin.exit(1)
+            }
+        }
+        let audioPath = "\(outputBase).m4a"
         if audio && FileManager.default.fileExists(atPath: audioPath) {
             fputs("Error: \(audioPath) already exists\n", stderr)
             Darwin.exit(1)
         }
 
-        // Discover displays
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
-              let display = content.displays.first else {
-            fputs("No displays found\n", stderr)
-            Darwin.exit(1)
-        }
+        // Shared abort semaphore - any stream error triggers abort
+        let abortSemaphore = DispatchSemaphore(value: 0)
 
-        // Build content filter for the chosen display
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-
-        // Configure stream for video and audio capture
-        let cfg = SCStreamConfiguration()
-        cfg.width  = display.width
-        cfg.height = display.height
-        cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange // NV12
-        cfg.minimumFrameInterval = CMTimeMake(value: 1, timescale: Int32(frameRate))
-        cfg.colorSpaceName = CGColorSpace.sRGB
-        cfg.showsCursor = true
-        cfg.scalesToFit = false  // Avoid resampling - use exact captured size
-        cfg.sampleRate = 48_000
-        cfg.channelCount = 1
-
-        // Configure audio capture based on flag
-        cfg.capturesAudio = audio
-        if #available(macOS 15.0, *), audio {
-            cfg.captureMicrophone = true
-            cfg.microphoneCaptureDeviceID = nil  // nil uses default microphone
-        }
-
-        // Create output handler first (need its semaphore for delegate)
-        guard let out = StreamOutput.create(
-            videoURL: URL(fileURLWithPath: "\(outputBase).mov"),
-            audioURL: URL(fileURLWithPath: "\(outputBase).m4a"),
-            width: display.width,
-            height: display.height,
-            frameRate: frameRate,
-            duration: captureDuration,
-            captureAudio: audio,
-            verbose: verbose
-        ) else {
-            fputs("Failed to initialize output\n", stderr)
-            Darwin.exit(1)
-        }
-
-        // Create stream delegate and stream
-        let streamDelegate = StreamDelegate(verbose: verbose, completionSemaphore: out.sema)
-        let stream = SCStream(filter: filter, configuration: cfg, delegate: streamDelegate)
-
-        // Add stream outputs
-        do {
-            try stream.addStreamOutput(out, type: .screen, sampleHandlerQueue: .main)
-            if audio {
-                try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
-            }
-        } catch {
-            fputs("Failed to add stream outputs: \(error)\n", stderr)
-            Darwin.exit(1)
-        }
-
-        // Add microphone output for macOS 15.0+ if audio is enabled
-        if #available(macOS 15.0, *), audio {
-            do {
-                try stream.addStreamOutput(out, type: .microphone, sampleHandlerQueue: .main)
-                print("Both system audio and microphone capture enabled")
-            } catch {
-                fputs("Could not enable microphone capture: \(error)\n", stderr)
+        // Create audio output (attached to first display's stream)
+        var audioOutput: AudioStreamOutput? = nil
+        if audio {
+            guard let ao = AudioStreamOutput.create(
+                audioURL: URL(fileURLWithPath: audioPath),
+                duration: captureDuration,
+                verbose: verbose
+            ) else {
+                fputs("Failed to initialize audio output\n", stderr)
                 Darwin.exit(1)
             }
-        } else if audio {
-            print("Microphone capture requires macOS 15.0 or later - system audio only")
+            audioOutput = ao
         }
 
-        // Start capture
-        try? await stream.startCapture()
+        // Create capture pipeline for each display
+        var captures: [DisplayCapture] = []
 
-        if verbose {
-            print("[VERBOSE] Stream started successfully - delegate monitoring for errors")
+        for (index, display) in displays.enumerated() {
+            let videoPath = videoPaths[display.displayID]!
+
+            // Create video output for this display
+            guard let videoOutput = VideoStreamOutput.create(
+                displayID: display.displayID,
+                videoURL: URL(fileURLWithPath: videoPath),
+                width: display.width,
+                height: display.height,
+                frameRate: frameRate,
+                duration: captureDuration,
+                verbose: verbose
+            ) else {
+                fputs("Failed to initialize video output for display \(display.displayID)\n", stderr)
+                Darwin.exit(1)
+            }
+
+            // Configure stream for this display
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let cfg = SCStreamConfiguration()
+            cfg.width = display.width
+            cfg.height = display.height
+            cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange // NV12
+            cfg.minimumFrameInterval = CMTimeMake(value: 1, timescale: Int32(frameRate))
+            cfg.colorSpaceName = CGColorSpace.sRGB
+            cfg.showsCursor = true
+            cfg.scalesToFit = false
+            cfg.sampleRate = 48_000
+            cfg.channelCount = 1
+
+            // Only capture audio on first display's stream
+            let captureAudioOnThisStream = audio && index == 0
+            cfg.capturesAudio = captureAudioOnThisStream
+            if #available(macOS 15.0, *), captureAudioOnThisStream {
+                cfg.captureMicrophone = true
+                cfg.microphoneCaptureDeviceID = nil
+            }
+
+            let delegate = StreamDelegate(verbose: verbose, displayID: display.displayID, abortSemaphore: abortSemaphore)
+            let stream = SCStream(filter: filter, configuration: cfg, delegate: delegate)
+
+            // Add stream outputs
+            do {
+                try stream.addStreamOutput(videoOutput, type: .screen, sampleHandlerQueue: .main)
+
+                if captureAudioOnThisStream, let ao = audioOutput {
+                    try stream.addStreamOutput(ao, type: .audio, sampleHandlerQueue: .main)
+                    if #available(macOS 15.0, *) {
+                        try stream.addStreamOutput(ao, type: .microphone, sampleHandlerQueue: .main)
+                    }
+                }
+            } catch {
+                fputs("Failed to add stream outputs for display \(display.displayID): \(error)\n", stderr)
+                Darwin.exit(1)
+            }
+
+            captures.append(DisplayCapture(
+                displayID: display.displayID,
+                stream: stream,
+                videoOutput: videoOutput,
+                delegate: delegate
+            ))
+
+            print("  Display \(display.displayID): \(display.width)x\(display.height) → \(videoPath)")
+        }
+
+        // Start all streams
+        for capture in captures {
+            do {
+                try await capture.stream.startCapture()
+                if verbose {
+                    print("[VERBOSE] Stream for display \(capture.displayID) started")
+                }
+            } catch {
+                fputs("Failed to start capture for display \(capture.displayID): \(error)\n", stderr)
+                Darwin.exit(1)
+            }
         }
 
         // Print status message
-        printStatusMessage(audio: audio, captureDuration: captureDuration, frameRate: frameRate)
+        printStatusMessage(audio: audio, captureDuration: captureDuration, frameRate: frameRate, displayCount: displays.count)
 
         // Wait for capture to complete
-        await waitForCompletion(audio: audio, captureDuration: captureDuration, output: out)
+        await waitForCompletion(audio: audio, captureDuration: captureDuration, audioOutput: audioOutput, abortSemaphore: abortSemaphore)
 
-        _ = try? await stream.stopCapture()
+        // Stop all streams
+        for capture in captures {
+            _ = try? await capture.stream.stopCapture()
+        }
 
-        // Finish video writing
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            out.finishVideo { result in
-                switch result {
-                case .success(let url):
-                    print("Video saved to \(url.path)")
-                case .failure(let error):
-                    fputs("Failed to finish video: \(error)\n", stderr)
+        // Finish all video writers
+        for capture in captures {
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                capture.videoOutput.finish { result in
+                    switch result {
+                    case .success(let url):
+                        print("Video saved to \(url.path)")
+                    case .failure(let error):
+                        fputs("Failed to finish video for display \(capture.displayID): \(error)\n", stderr)
+                    }
+                    cont.resume()
                 }
-                cont.resume()
             }
         }
 
         Darwin.exit(0)
     }
 
-    private func printStatusMessage(audio: Bool, captureDuration: Double?, frameRate: Double) {
+    private func printStatusMessage(audio: Bool, captureDuration: Double?, frameRate: Double, displayCount: Int) {
+        let displayText = displayCount == 1 ? "1 display" : "\(displayCount) displays"
+
         if audio {
             if let duration = captureDuration {
                 if #available(macOS 15.0, *) {
-                    print("Started capture - recording \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with audio...")
+                    print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with audio...")
                 } else {
-                    print("Started capture - recording \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with system audio only...")
+                    print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with system audio only...")
                 }
             } else {
-                print("Started capture - recording indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...")
+                print("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...")
             }
         } else {
             if let duration = captureDuration {
-                print("Started capture - recording \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...")
+                print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...")
             } else {
-                print("Started capture - indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
+                print("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
             }
         }
     }
 
-    private func waitForCompletion(audio: Bool, captureDuration: Double?, output: StreamOutput) async {
-        if audio {
-            // Audio-driven completion
+    private func waitForCompletion(audio: Bool, captureDuration: Double?, audioOutput: AudioStreamOutput?, abortSemaphore: DispatchSemaphore) async {
+        // Create a completion semaphore that can be signaled by any completion path
+        let completionSema = DispatchSemaphore(value: 0)
+
+        if audio, let ao = audioOutput {
+            // Wait for either audio completion or abort signal
+            DispatchQueue.global().async {
+                ao.sema.wait()
+                completionSema.signal()
+            }
+            DispatchQueue.global().async {
+                abortSemaphore.wait()
+                completionSema.signal()
+            }
+
             await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                 DispatchQueue.global().async {
-                    output.sema.wait()
+                    completionSema.wait()
                     cont.resume()
                 }
             }
         } else if let duration = captureDuration {
-            // Timer-driven completion for video-only
-            try? await Task.sleep(for: .seconds(duration))
+            // Timer-driven completion for video-only, but also watch for abort
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().async {
+                    let result = abortSemaphore.wait(timeout: .now() + duration)
+                    if result == .timedOut {
+                        // Normal completion
+                    }
+                    // Either way, we're done
+                    cont.resume()
+                }
+            }
         } else {
-            // Indefinite capture until user interrupts
-            try? await Task.sleep(for: .seconds(Double.greatestFiniteMagnitude))
+            // Indefinite capture until user interrupts or abort
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().async {
+                    abortSemaphore.wait()
+                    cont.resume()
+                }
+            }
         }
     }
 }
