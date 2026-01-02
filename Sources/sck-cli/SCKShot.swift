@@ -10,6 +10,8 @@ import CoreGraphics
 // These are intentionally global mutable state for async-signal-safe access
 nonisolated(unsafe) private var globalAbortSemaphore: DispatchSemaphore?
 nonisolated(unsafe) private var signalReceived = false
+nonisolated(unsafe) private var receivedSignal: Int32 = 0
+nonisolated(unsafe) private var streamErrorOccurred = false
 
 private func signalHandler(signal: Int32) {
     if signalReceived {
@@ -18,6 +20,7 @@ private func signalHandler(signal: Int32) {
         Darwin.raise(signal)
     } else {
         signalReceived = true
+        receivedSignal = signal
         Stderr.print("\nReceived signal \(signal), shutting down gracefully (send again to force quit)...")
         globalAbortSemaphore?.signal()
     }
@@ -85,7 +88,8 @@ final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
                 Stderr.print("[VERBOSE] Display \(displayID) error details: \(error.localizedDescription)")
             }
         }
-        // Signal abort for any stream error
+        // Mark that a stream error occurred and signal abort
+        streamErrorOccurred = true
         abortSemaphore.signal()
     }
 }
@@ -179,6 +183,8 @@ struct SCKShot: AsyncParsableCommand {
         }
 
         // Create capture pipeline for each display
+        // Use dedicated serial queue for sample callbacks (not main queue)
+        let sampleQueue = DispatchQueue(label: "com.sck-cli.samples", qos: .userInteractive)
         var captures: [DisplayCapture] = []
 
         for (index, display) in displays.enumerated() {
@@ -224,12 +230,12 @@ struct SCKShot: AsyncParsableCommand {
 
             // Add stream outputs
             do {
-                try stream.addStreamOutput(videoOutput, type: .screen, sampleHandlerQueue: .main)
+                try stream.addStreamOutput(videoOutput, type: .screen, sampleHandlerQueue: sampleQueue)
 
                 if captureAudioOnThisStream, let ao = audioOutput {
-                    try stream.addStreamOutput(ao, type: .audio, sampleHandlerQueue: .main)
+                    try stream.addStreamOutput(ao, type: .audio, sampleHandlerQueue: sampleQueue)
                     if #available(macOS 15.0, *) {
-                        try stream.addStreamOutput(ao, type: .microphone, sampleHandlerQueue: .main)
+                        try stream.addStreamOutput(ao, type: .microphone, sampleHandlerQueue: sampleQueue)
                     }
                 }
             } catch {
@@ -268,7 +274,17 @@ struct SCKShot: AsyncParsableCommand {
 
         // Stop all streams
         for capture in captures {
-            _ = try? await capture.stream.stopCapture()
+            do {
+                try await capture.stream.stopCapture()
+                if verbose {
+                    Stderr.print("[VERBOSE] Stream for display \(capture.displayID) stopped")
+                }
+            } catch {
+                // Stream may already be stopped due to error - log in verbose mode
+                if verbose {
+                    Stderr.print("[VERBOSE] Display \(capture.displayID) stopCapture: \(error.localizedDescription)")
+                }
+            }
         }
 
         // Finish audio writer (for graceful shutdown on signal)
@@ -286,21 +302,35 @@ struct SCKShot: AsyncParsableCommand {
         }
 
         // Finish all video writers
+        var videoWriteErrors: [CGDirectDisplayID] = []
         for capture in captures {
-            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let result: Result<URL, Error> = await withCheckedContinuation { cont in
                 capture.videoOutput.finish { result in
-                    switch result {
-                    case .success(let url):
-                        Stderr.print("Video saved to \(url.path)")
-                    case .failure(let error):
-                        Stderr.print("Failed to finish video for display \(capture.displayID): \(error)")
-                    }
-                    cont.resume()
+                    cont.resume(returning: result)
                 }
+            }
+            switch result {
+            case .success(let url):
+                Stderr.print("Video saved to \(url.path)")
+            case .failure(let error):
+                Stderr.print("Failed to finish video for display \(capture.displayID): \(error)")
+                videoWriteErrors.append(capture.displayID)
             }
         }
 
-        Darwin.exit(0)
+        // Determine exit code based on what happened
+        let exitCode: Int32
+        if streamErrorOccurred || !videoWriteErrors.isEmpty {
+            // Stream error or video write failure
+            exitCode = 1
+        } else if signalReceived {
+            // Signal-triggered shutdown: exit with 128 + signal number (Unix convention)
+            exitCode = 128 + receivedSignal
+        } else {
+            // Normal completion (duration elapsed or audio finished)
+            exitCode = 0
+        }
+        Darwin.exit(exitCode)
     }
 
     private func printStatusMessage(audio: Bool, captureDuration: Double?, frameRate: Double, displayCount: Int) {
