@@ -1,7 +1,6 @@
 import Foundation
 import AVFoundation
 import CoreMedia
-import Darwin
 
 /// Manages audio capture and writing to M4A file with multiple tracks
 final class AudioWriter: @unchecked Sendable {
@@ -102,7 +101,7 @@ final class AudioWriter: @unchecked Sendable {
             writer.startSession(atSourceTime: .zero)
             sessionStarted = true
             firstAudioTime = currentTime
-            fputs("Started audio recording at \(CMTimeGetSeconds(currentTime))\n", stderr)
+            Stderr.print("Started audio recording at \(CMTimeGetSeconds(currentTime))")
         }
         lastMediaTime = currentTime
         finishLock.unlock()
@@ -128,7 +127,7 @@ final class AudioWriter: @unchecked Sendable {
         let alreadyFinished = systemFinished
         if !alreadyFinished {
             systemFinished = true
-            fputs("Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds\n", stderr)
+            Stderr.print("Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds")
             systemInput.markAsFinished()
         }
         let bothFinished = systemFinished && microphoneFinished
@@ -144,7 +143,7 @@ final class AudioWriter: @unchecked Sendable {
         let alreadyFinished = microphoneFinished
         if !alreadyFinished {
             microphoneFinished = true
-            fputs("Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds\n", stderr)
+            Stderr.print("Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds")
             microphoneInput.markAsFinished()
         }
         let bothFinished = systemFinished && microphoneFinished
@@ -158,9 +157,9 @@ final class AudioWriter: @unchecked Sendable {
     private func finalizeWriter(elapsed: Double) {
         writer.finishWriting { [weak self] in
             guard let self = self else { return }
-            fputs("wrote \(self.writer.outputURL.lastPathComponent) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)\n", stderr)
+            Stderr.print("wrote \(self.writer.outputURL.lastPathComponent) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)")
             if self.writer.status == .failed {
-                fputs("audio writer error: \(String(describing: self.writer.error))\n", stderr)
+                Stderr.print("audio writer error: \(String(describing: self.writer.error))")
             }
             self.onComplete?()
         }

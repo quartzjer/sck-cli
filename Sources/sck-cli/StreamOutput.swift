@@ -41,7 +41,7 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 duration: duration
             )
         } catch {
-            fputs("Failed to create video writer for display \(displayID): \(error)\n", stderr)
+            Stderr.print("Failed to create video writer for display \(displayID): \(error)")
             return nil
         }
 
@@ -73,14 +73,14 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             let pts = CMSampleBufferGetPresentationTimeStamp(sb)
             let timestamp = CMTimeGetSeconds(pts)
             logLock.unlock()
-            fputs("[VERBOSE] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s\n", stderr)
+            Stderr.print("[VERBOSE] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s")
         }
         videoWriter.appendFrame(sb)
     }
 
     /// Finishes video writing
     /// - Parameter completion: Callback with result
-    func finish(completion: @escaping (Result<URL, Error>) -> Void) {
+    func finish(completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
         videoWriter.finish(completion: completion)
     }
 }
@@ -117,7 +117,7 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 duration: duration
             )
         } catch {
-            fputs("Failed to create audio writer: \(error)\n", stderr)
+            Stderr.print("Failed to create audio writer: \(error)")
             return nil
         }
 
@@ -177,7 +177,7 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let now = Date()
         if let lastLog = lastAudioLogTime {
             if now.timeIntervalSince(lastLog) >= 1.0 {
-                fputs("[VERBOSE] Audio buffers in last ~1s: system=\(systemAudioBufferCount), mic=\(microphoneBufferCount)\n", stderr)
+                Stderr.print("[VERBOSE] Audio buffers in last ~1s: system=\(systemAudioBufferCount), mic=\(microphoneBufferCount)")
                 systemAudioBufferCount = 0
                 microphoneBufferCount = 0
                 lastAudioLogTime = now
