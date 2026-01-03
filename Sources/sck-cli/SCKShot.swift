@@ -21,7 +21,7 @@ private func signalHandler(signal: Int32) {
     } else {
         signalReceived = true
         receivedSignal = signal
-        Stderr.print("\nReceived signal \(signal), shutting down gracefully (send again to force quit)...")
+        Stderr.print("\n[INFO] Received signal \(signal), shutting down gracefully (send again to force quit)...")
         globalAbortSemaphore?.signal()
     }
 }
@@ -80,12 +80,12 @@ final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
         if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3815 {
             Stderr.print("\n[INFO] Display \(displayID) became unavailable (system sleep?) - aborting capture...")
             if verbose {
-                Stderr.print("[VERBOSE] Display \(displayID) error -3815: Failed to find any displays or windows to capture")
+                Stderr.print("[INFO] Display \(displayID) error -3815: Failed to find any displays or windows to capture")
             }
         } else {
             Stderr.print("[ERROR] Display \(displayID) stream stopped with error: \(error)")
             if verbose {
-                Stderr.print("[VERBOSE] Display \(displayID) error details: \(error.localizedDescription)")
+                Stderr.print("[INFO] Display \(displayID) error details: \(error.localizedDescription)")
             }
         }
         // Mark that a stream error occurred and signal abort
@@ -131,12 +131,12 @@ struct SCKShot: AsyncParsableCommand {
         // Discover all displays
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               !content.displays.isEmpty else {
-            Stderr.print("No displays found")
+            Stderr.print("[ERROR] No displays found")
             Darwin.exit(1)
         }
 
         let displays = content.displays
-        Stderr.print("Found \(displays.count) display(s)")
+        Stderr.print("[INFO] Found \(displays.count) display(s)")
 
         // Build list of video paths for all displays
         var videoPaths: [CGDirectDisplayID: String] = [:]
@@ -147,13 +147,13 @@ struct SCKShot: AsyncParsableCommand {
         // Check for existing output files
         for (_, path) in videoPaths {
             if FileManager.default.fileExists(atPath: path) {
-                Stderr.print("Error: \(path) already exists")
+                Stderr.print("[ERROR] \(path) already exists")
                 Darwin.exit(1)
             }
         }
         let audioPath = "\(outputBase).m4a"
         if audio && FileManager.default.fileExists(atPath: audioPath) {
-            Stderr.print("Error: \(audioPath) already exists")
+            Stderr.print("[ERROR] \(audioPath) already exists")
             Darwin.exit(1)
         }
 
@@ -176,7 +176,7 @@ struct SCKShot: AsyncParsableCommand {
                 duration: captureDuration,
                 verbose: verbose
             ) else {
-                Stderr.print("Failed to initialize audio output")
+                Stderr.print("[ERROR] Failed to initialize audio output")
                 Darwin.exit(1)
             }
             audioOutput = ao
@@ -200,7 +200,7 @@ struct SCKShot: AsyncParsableCommand {
                 duration: captureDuration,
                 verbose: verbose
             ) else {
-                Stderr.print("Failed to initialize video output for display \(display.displayID)")
+                Stderr.print("[ERROR] Failed to initialize video output for display \(display.displayID)")
                 Darwin.exit(1)
             }
 
@@ -239,7 +239,7 @@ struct SCKShot: AsyncParsableCommand {
                     }
                 }
             } catch {
-                Stderr.print("Failed to add stream outputs for display \(display.displayID): \(error)")
+                Stderr.print("[ERROR] Failed to add stream outputs for display \(display.displayID): \(error)")
                 Darwin.exit(1)
             }
 
@@ -250,7 +250,7 @@ struct SCKShot: AsyncParsableCommand {
                 delegate: delegate
             ))
 
-            Stderr.print("  Display \(display.displayID): \(display.width)x\(display.height) → \(videoPath)")
+            Stderr.print("[INFO]   Display \(display.displayID): \(display.width)x\(display.height) → \(videoPath)")
         }
 
         // Start all streams
@@ -258,10 +258,10 @@ struct SCKShot: AsyncParsableCommand {
             do {
                 try await capture.stream.startCapture()
                 if verbose {
-                    Stderr.print("[VERBOSE] Stream for display \(capture.displayID) started")
+                    Stderr.print("[INFO] Stream for display \(capture.displayID) started")
                 }
             } catch {
-                Stderr.print("Failed to start capture for display \(capture.displayID): \(error)")
+                Stderr.print("[ERROR] Failed to start capture for display \(capture.displayID): \(error)")
                 Darwin.exit(1)
             }
         }
@@ -277,12 +277,12 @@ struct SCKShot: AsyncParsableCommand {
             do {
                 try await capture.stream.stopCapture()
                 if verbose {
-                    Stderr.print("[VERBOSE] Stream for display \(capture.displayID) stopped")
+                    Stderr.print("[INFO] Stream for display \(capture.displayID) stopped")
                 }
             } catch {
                 // Stream may already be stopped due to error - log in verbose mode
                 if verbose {
-                    Stderr.print("[VERBOSE] Display \(capture.displayID) stopCapture: \(error.localizedDescription)")
+                    Stderr.print("[INFO] Display \(capture.displayID) stopCapture: \(error.localizedDescription)")
                 }
             }
         }
@@ -307,16 +307,16 @@ struct SCKShot: AsyncParsableCommand {
         // Finish all video writers
         var videoWriteErrors: [CGDirectDisplayID] = []
         for capture in captures {
-            let result: Result<URL, Error> = await withCheckedContinuation { cont in
+            let result: Result<(URL, Int), Error> = await withCheckedContinuation { cont in
                 capture.videoOutput.finish { result in
                     cont.resume(returning: result)
                 }
             }
             switch result {
-            case .success(let url):
-                Stderr.print("Video saved to \(url.path)")
+            case .success((let url, let frameCount)):
+                Stderr.print("[INFO] Saved video to \(url.path) (\(frameCount) frames)")
             case .failure(let error):
-                Stderr.print("Failed to finish video for display \(capture.displayID): \(error)")
+                Stderr.print("[ERROR] Failed to finish video for display \(capture.displayID): \(error)")
                 videoWriteErrors.append(capture.displayID)
             }
         }
@@ -342,18 +342,18 @@ struct SCKShot: AsyncParsableCommand {
         if audio {
             if let duration = captureDuration {
                 if #available(macOS 15.0, *) {
-                    Stderr.print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with audio...")
+                    Stderr.print("[INFO] Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with audio...")
                 } else {
-                    Stderr.print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with system audio only...")
+                    Stderr.print("[INFO] Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz with system audio only...")
                 }
             } else {
-                Stderr.print("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...")
+                Stderr.print("[INFO] Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz with audio (Ctrl-C to stop)...")
             }
         } else {
             if let duration = captureDuration {
-                Stderr.print("Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...")
+                Stderr.print("[INFO] Started capture - recording \(displayText) for \(String(format: "%.1f", duration)) seconds at \(String(format: "%.1f", frameRate)) Hz...")
             } else {
-                Stderr.print("Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
+                Stderr.print("[INFO] Started capture - recording \(displayText) indefinitely at \(String(format: "%.1f", frameRate)) Hz (Ctrl-C to stop)...")
             }
         }
     }
@@ -423,12 +423,13 @@ struct SCKShot: AsyncParsableCommand {
 
         // Output audio info if enabled
         if let audioPath = audioPath {
+            var tracks = [AudioTrackInfo(name: "system")]
+            if #available(macOS 15.0, *) {
+                tracks.append(AudioTrackInfo(name: "microphone"))
+            }
             let info = AudioInfo(
                 type: "audio",
-                tracks: [
-                    AudioTrackInfo(name: "system"),
-                    AudioTrackInfo(name: "microphone")
-                ],
+                tracks: tracks,
                 sampleRate: 48000,
                 channels: 1,
                 filename: audioPath

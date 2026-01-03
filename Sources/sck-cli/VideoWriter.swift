@@ -10,6 +10,7 @@ final class VideoWriter: @unchecked Sendable {
 
     private var started = false
     private var captureStartTime: CMTime?
+    private var frameCount: Int = 0
     private var lock = NSLock()
 
     /// Creates a video writer instance
@@ -94,7 +95,7 @@ final class VideoWriter: @unchecked Sendable {
             captureStartTime = pts
             writer.startWriting()
             writer.startSession(atSourceTime: pts)
-            Stderr.print("Started video recording to \(writer.outputURL.path)")
+            Stderr.print("[INFO] Started video recording to \(writer.outputURL.path)")
         }
 
         // Check duration limit if specified
@@ -107,15 +108,18 @@ final class VideoWriter: @unchecked Sendable {
         }
 
         if videoInput.isReadyForMoreMediaData {
-            _ = videoInput.append(sampleBuffer)
+            if videoInput.append(sampleBuffer) {
+                frameCount += 1
+            }
         }
     }
 
     /// Finishes writing and closes the video file
-    /// - Parameter completion: Callback with result (URL on success, error on failure)
-    func finish(completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
+    /// - Parameter completion: Callback with result ((URL, frameCount) on success, error on failure)
+    func finish(completion: @escaping @Sendable (Result<(URL, Int), Error>) -> Void) {
         lock.lock()
         let shouldFinish = started
+        let finalFrameCount = frameCount
         lock.unlock()
 
         guard shouldFinish else {
@@ -132,7 +136,7 @@ final class VideoWriter: @unchecked Sendable {
         let outputURL = writer.outputURL
         writer.finishWriting { @Sendable in
             if self.writer.status == .completed {
-                completion(.success(outputURL))
+                completion(.success((outputURL, finalFrameCount)))
             } else {
                 completion(.failure(self.writer.error ?? NSError(domain: "VideoWriter", code: -3, userInfo: [NSLocalizedDescriptionKey: "Unknown error"])))
             }

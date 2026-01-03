@@ -41,7 +41,7 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 duration: duration
             )
         } catch {
-            Stderr.print("Failed to create video writer for display \(displayID): \(error)")
+            Stderr.print("[ERROR] Failed to create video writer for display \(displayID): \(error)")
             return nil
         }
 
@@ -73,14 +73,14 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             let pts = CMSampleBufferGetPresentationTimeStamp(sb)
             let timestamp = CMTimeGetSeconds(pts)
             logLock.unlock()
-            Stderr.print("[VERBOSE] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s")
+            Stderr.print("[INFO] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s")
         }
         videoWriter.appendFrame(sb)
     }
 
     /// Finishes video writing
-    /// - Parameter completion: Callback with result
-    func finish(completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
+    /// - Parameter completion: Callback with result (URL and frame count on success)
+    func finish(completion: @escaping @Sendable (Result<(URL, Int), Error>) -> Void) {
         videoWriter.finish(completion: completion)
     }
 }
@@ -114,10 +114,11 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         do {
             audioWriter = try AudioWriter.create(
                 url: audioURL,
-                duration: duration
+                duration: duration,
+                verbose: verbose
             )
         } catch {
-            Stderr.print("Failed to create audio writer: \(error)")
+            Stderr.print("[ERROR] Failed to create audio writer: \(error)")
             return nil
         }
 
@@ -177,7 +178,7 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let now = Date()
         if let lastLog = lastAudioLogTime {
             if now.timeIntervalSince(lastLog) >= 1.0 {
-                Stderr.print("[VERBOSE] Audio buffers in last ~1s: system=\(systemAudioBufferCount), mic=\(microphoneBufferCount)")
+                Stderr.print("[INFO] Audio buffers in last ~1s: system=\(systemAudioBufferCount), mic=\(microphoneBufferCount)")
                 systemAudioBufferCount = 0
                 microphoneBufferCount = 0
                 lastAudioLogTime = now

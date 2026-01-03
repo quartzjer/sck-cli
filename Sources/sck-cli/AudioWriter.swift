@@ -8,6 +8,8 @@ final class AudioWriter: @unchecked Sendable {
     private let systemInput: AVAssetWriterInput
     private let microphoneInput: AVAssetWriterInput
     private let finishLock = NSLock()
+    private let outputPath: String
+    private let verbose: Bool
 
     private var sessionStarted = false
     private var firstAudioTime: CMTime?
@@ -21,22 +23,26 @@ final class AudioWriter: @unchecked Sendable {
     /// - Parameters:
     ///   - url: File URL to write audio to
     ///   - duration: Maximum duration in seconds, or nil for indefinite
+    ///   - verbose: Enable verbose logging
     /// - Throws: Error if writer creation fails
     static func create(
         url: URL,
-        duration: Double?
+        duration: Double?,
+        verbose: Bool = false
     ) throws -> AudioWriter {
         // Remove existing file if present
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
 
-        return try AudioWriter(url: url, duration: duration)
+        return try AudioWriter(url: url, duration: duration, verbose: verbose)
     }
 
-    private init(url: URL, duration: Double?) throws {
+    private init(url: URL, duration: Double?, verbose: Bool) throws {
         self.writer = try AVAssetWriter(url: url, fileType: .m4a)
         self.duration = duration
+        self.outputPath = url.path
+        self.verbose = verbose
 
         // Configure AAC audio format for M4A (mono tracks)
         let audioSettings: [String: Any] = [
@@ -102,7 +108,7 @@ final class AudioWriter: @unchecked Sendable {
             writer.startSession(atSourceTime: .zero)
             sessionStarted = true
             firstAudioTime = currentTime
-            Stderr.print("Started audio recording at \(CMTimeGetSeconds(currentTime))")
+            Stderr.print("[INFO] Started audio recording to \(outputPath)")
         }
         lastMediaTime = currentTime
         let firstTime = firstAudioTime
@@ -129,14 +135,17 @@ final class AudioWriter: @unchecked Sendable {
         let alreadyFinished = systemFinished
         let firstTime = firstAudioTime
         let lastTime = lastMediaTime
+        let shouldLog = verbose
         if !alreadyFinished {
             systemFinished = true
-            Stderr.print("Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds")
             systemInput.markAsFinished()
         }
         let bothFinished = systemFinished && microphoneFinished
         finishLock.unlock()
 
+        if !alreadyFinished && shouldLog {
+            Stderr.print("[INFO] Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds")
+        }
         if !alreadyFinished && bothFinished {
             finalizeWriter(elapsed: elapsed, firstTime: firstTime, lastTime: lastTime)
         }
@@ -147,14 +156,17 @@ final class AudioWriter: @unchecked Sendable {
         let alreadyFinished = microphoneFinished
         let firstTime = firstAudioTime
         let lastTime = lastMediaTime
+        let shouldLog = verbose
         if !alreadyFinished {
             microphoneFinished = true
-            Stderr.print("Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds")
             microphoneInput.markAsFinished()
         }
         let bothFinished = systemFinished && microphoneFinished
         finishLock.unlock()
 
+        if !alreadyFinished && shouldLog {
+            Stderr.print("[INFO] Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds")
+        }
         if !alreadyFinished && bothFinished {
             finalizeWriter(elapsed: elapsed, firstTime: firstTime, lastTime: lastTime)
         }
@@ -169,9 +181,9 @@ final class AudioWriter: @unchecked Sendable {
 
         // Check writer status before calling finishWriting
         guard writer.status == .writing else {
-            Stderr.print("audio writer not in writing state (status: \(writer.status.rawValue)), calling onComplete directly")
+            Stderr.print("[ERROR] Audio writer not in writing state (status: \(writer.status.rawValue)), calling onComplete directly")
             if writer.status == .failed {
-                Stderr.print("audio writer error: \(String(describing: writer.error))")
+                Stderr.print("[ERROR] Audio writer error: \(String(describing: writer.error))")
             }
             onComplete?()
             return
@@ -179,9 +191,10 @@ final class AudioWriter: @unchecked Sendable {
 
         writer.finishWriting { [weak self] in
             guard let self = self else { return }
-            Stderr.print("wrote \(self.writer.outputURL.lastPathComponent) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)")
             if self.writer.status == .failed {
-                Stderr.print("audio writer error: \(String(describing: self.writer.error))")
+                Stderr.print("[ERROR] Audio writer error: \(String(describing: self.writer.error))")
+            } else {
+                Stderr.print("[INFO] Saved audio to \(self.outputPath) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)")
             }
             self.onComplete?()
         }
@@ -195,6 +208,7 @@ final class AudioWriter: @unchecked Sendable {
         let micAlreadyFinished = microphoneFinished
         let firstTime = firstAudioTime
         let lastTime = lastMediaTime
+        let shouldLog = verbose
         if !systemFinished {
             systemFinished = true
             systemInput.markAsFinished()
@@ -212,6 +226,14 @@ final class AudioWriter: @unchecked Sendable {
                 elapsed = CMTimeGetSeconds(CMTimeSubtract(lastTime, firstTime))
             } else {
                 elapsed = 0
+            }
+            if shouldLog {
+                if !systemAlreadyFinished {
+                    Stderr.print("[INFO] Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds")
+                }
+                if !micAlreadyFinished {
+                    Stderr.print("[INFO] Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds")
+                }
             }
             finalizeWriter(elapsed: elapsed, firstTime: firstTime, lastTime: lastTime)
         }
