@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2026 sol pbc
+
 import Darwin
 
 /// Unbuffered stdout output

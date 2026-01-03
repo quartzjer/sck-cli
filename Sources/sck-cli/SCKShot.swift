@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2026 sol pbc
+
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import ArgumentParser
