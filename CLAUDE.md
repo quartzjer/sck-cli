@@ -50,6 +50,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 - **AudioWriter.swift** - Multi-track M4A writing with AVAssetWriter (system audio + microphone)
 - **VideoWriter.swift** - HEVC hardware encoding to .mov with AVAssetWriter
 - **StreamOutput.swift** - SCStreamOutput protocol implementations for video and audio capture
+- **WindowMask.swift** - Window detection and pixel buffer masking for confidential mode
 - **Output.swift** - Unbuffered stdout/stderr utilities for immediate output visibility
 
 ## Key Technical Details
@@ -68,6 +69,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
   - `-r, --frame-rate` - Frame rate in Hz (default: 1.0)
   - `-l, --length` - Duration in seconds
   - `--audio/--no-audio` - Enable/disable audio (default: enabled)
+  - `--mask <app>` - App name(s) to mask with black rectangles (can specify multiple times)
   - `-v, --verbose` - Enable verbose logging
 - **Output**: JSONL to stdout (one line per display, one for audio); all logging to stderr
 

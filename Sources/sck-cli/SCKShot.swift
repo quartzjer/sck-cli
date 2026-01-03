@@ -121,6 +121,9 @@ struct SCKShot: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "Enable verbose logging")
     var verbose: Bool = false
 
+    @Option(name: .long, parsing: .upToNextOption, help: "App name(s) to mask (can specify multiple times)")
+    var mask: [String] = []
+
     func run() async throws {
         // Configure unbuffered I/O for immediate output visibility
         Stdout.setUnbuffered()
@@ -137,6 +140,19 @@ struct SCKShot: AsyncParsableCommand {
 
         let displays = content.displays
         Stderr.print("[INFO] Found \(displays.count) display(s)")
+
+        // Create mask detector if apps specified
+        let maskDetector: WindowMaskDetector? = mask.isEmpty ? nil : WindowMaskDetector(appNames: mask)
+        if let detector = maskDetector {
+            Stderr.print("[INFO] Masking enabled for apps: \(mask.joined(separator: ", "))")
+            if verbose {
+                let initialWindows = detector.detectWindows()
+                for window in initialWindows {
+                    let regionCount = window.visibleRegions.count
+                    Stderr.print("[INFO] Found window to mask: \(window.ownerName) window \(window.windowID) (\(regionCount) visible region\(regionCount == 1 ? "" : "s"))")
+                }
+            }
+        }
 
         // Build list of video paths for all displays
         var videoPaths: [CGDirectDisplayID: String] = [:]
@@ -191,6 +207,7 @@ struct SCKShot: AsyncParsableCommand {
             let videoPath = videoPaths[display.displayID]!
 
             // Create video output for this display
+            let displayBounds = CGDisplayBounds(display.displayID)
             guard let videoOutput = VideoStreamOutput.create(
                 displayID: display.displayID,
                 videoURL: URL(fileURLWithPath: videoPath),
@@ -198,7 +215,9 @@ struct SCKShot: AsyncParsableCommand {
                 height: display.height,
                 frameRate: frameRate,
                 duration: captureDuration,
-                verbose: verbose
+                verbose: verbose,
+                maskDetector: maskDetector,
+                displayBounds: displayBounds
             ) else {
                 Stderr.print("[ERROR] Failed to initialize video output for display \(display.displayID)")
                 Darwin.exit(1)

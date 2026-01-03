@@ -1,15 +1,19 @@
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import CoreMedia
+import CoreVideo
 
 /// Handles video capture for a single display by implementing SCStreamOutput protocol
 final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     let displayID: CGDirectDisplayID
     private let videoWriter: VideoWriter
     private let verbose: Bool
+    private let maskDetector: WindowMaskDetector?
+    private let displayBounds: CGRect
 
     // Verbose logging state
     private var frameCount: Int = 0
+    private var lastMaskLogTime: Date?
     private let logLock = NSLock()
 
     /// Creates a video stream output for a single display
@@ -21,6 +25,8 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     ///   - frameRate: Frame rate for video
     ///   - duration: Capture duration in seconds
     ///   - verbose: Enable verbose logging
+    ///   - maskDetector: Optional detector for windows to mask
+    ///   - displayBounds: The display's bounds in global screen coordinates
     /// - Returns: VideoStreamOutput instance, or nil if writer creation fails
     static func create(
         displayID: CGDirectDisplayID,
@@ -29,7 +35,9 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         height: Int,
         frameRate: Double,
         duration: Double?,
-        verbose: Bool
+        verbose: Bool,
+        maskDetector: WindowMaskDetector? = nil,
+        displayBounds: CGRect = .zero
     ) -> VideoStreamOutput? {
         let videoWriter: VideoWriter
         do {
@@ -48,18 +56,24 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         return VideoStreamOutput(
             displayID: displayID,
             videoWriter: videoWriter,
-            verbose: verbose
+            verbose: verbose,
+            maskDetector: maskDetector,
+            displayBounds: displayBounds
         )
     }
 
     private init(
         displayID: CGDirectDisplayID,
         videoWriter: VideoWriter,
-        verbose: Bool
+        verbose: Bool,
+        maskDetector: WindowMaskDetector?,
+        displayBounds: CGRect
     ) {
         self.displayID = displayID
         self.videoWriter = videoWriter
         self.verbose = verbose
+        self.maskDetector = maskDetector
+        self.displayBounds = displayBounds
         super.init()
     }
 
@@ -75,6 +89,35 @@ final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             logLock.unlock()
             Stderr.print("[INFO] Display \(displayID) frame #\(frameCount) at \(String(format: "%.3f", timestamp))s")
         }
+
+        // Detect and mask windows
+        if let detector = maskDetector {
+            let maskedWindows = detector.detectWindows()
+
+            // Verbose logging (at most once per second)
+            if verbose && !maskedWindows.isEmpty {
+                logLock.lock()
+                let now = Date()
+                let shouldLog = lastMaskLogTime == nil || now.timeIntervalSince(lastMaskLogTime!) >= 1.0
+                if shouldLog {
+                    lastMaskLogTime = now
+                    logLock.unlock()
+                    for window in maskedWindows {
+                        let regionCount = window.visibleRegions.count
+                        Stderr.print("[INFO] Masking: \(window.ownerName) window \(window.windowID) (\(regionCount) visible region\(regionCount == 1 ? "" : "s"))")
+                    }
+                } else {
+                    logLock.unlock()
+                }
+            }
+
+            // Apply mask to pixel buffer
+            if !maskedWindows.isEmpty, let pixelBuffer = CMSampleBufferGetImageBuffer(sb) {
+                let allRegions = maskedWindows.flatMap { $0.visibleRegions }
+                FrameMasker.applyMask(to: pixelBuffer, regions: allRegions, displayBounds: displayBounds)
+            }
+        }
+
         videoWriter.appendFrame(sb)
     }
 
