@@ -50,6 +50,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 - **AudioWriter.swift** - Multi-track M4A writing with AVAssetWriter (system audio + microphone)
 - **VideoWriter.swift** - HEVC hardware encoding to .mov with AVAssetWriter
 - **StreamOutput.swift** - SCStreamOutput protocol implementations for video and audio capture
+- **Output.swift** - Unbuffered stdout/stderr utilities for immediate output visibility
 
 ## Key Technical Details
 

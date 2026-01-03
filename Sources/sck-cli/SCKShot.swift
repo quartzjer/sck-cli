@@ -291,12 +291,15 @@ struct SCKShot: AsyncParsableCommand {
         if let ao = audioOutput {
             let needsWait = ao.finish()
             if needsWait {
-                // Wait for audio completion
-                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                // Wait for audio completion with timeout to prevent hanging
+                let timedOut = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
                     DispatchQueue.global().async {
-                        ao.sema.wait()
-                        cont.resume()
+                        let result = ao.sema.wait(timeout: .now() + 5.0)
+                        cont.resume(returning: result == .timedOut)
                     }
+                }
+                if timedOut {
+                    Stderr.print("[WARNING] Audio finalization timed out after 5 seconds")
                 }
             }
         }

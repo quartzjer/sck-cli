@@ -89,14 +89,15 @@ final class AudioWriter: @unchecked Sendable {
     ) {
         let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
+        // Single lock acquisition for all state checks and updates
         finishLock.lock()
         let finished = systemFinished && microphoneFinished
-        finishLock.unlock()
-
-        guard !finished else { return }
+        if finished {
+            finishLock.unlock()
+            return
+        }
 
         // Start session on first buffer
-        finishLock.lock()
         if !sessionStarted {
             writer.startSession(atSourceTime: .zero)
             sessionStarted = true
@@ -104,9 +105,10 @@ final class AudioWriter: @unchecked Sendable {
             Stderr.print("Started audio recording at \(CMTimeGetSeconds(currentTime))")
         }
         lastMediaTime = currentTime
+        let firstTime = firstAudioTime
         finishLock.unlock()
 
-        guard let firstTime = firstAudioTime else { return }
+        guard let firstTime = firstTime else { return }
         let mediaElapsed = CMTimeGetSeconds(CMTimeSubtract(currentTime, firstTime))
 
         // Check if we should continue recording
@@ -125,6 +127,8 @@ final class AudioWriter: @unchecked Sendable {
     private func finishSystemAudio(elapsed: Double) {
         finishLock.lock()
         let alreadyFinished = systemFinished
+        let firstTime = firstAudioTime
+        let lastTime = lastMediaTime
         if !alreadyFinished {
             systemFinished = true
             Stderr.print("Finishing system audio track after \(String(format: "%.2f", elapsed)) seconds")
@@ -134,13 +138,15 @@ final class AudioWriter: @unchecked Sendable {
         finishLock.unlock()
 
         if !alreadyFinished && bothFinished {
-            finalizeWriter(elapsed: elapsed)
+            finalizeWriter(elapsed: elapsed, firstTime: firstTime, lastTime: lastTime)
         }
     }
 
     private func finishMicrophone(elapsed: Double) {
         finishLock.lock()
         let alreadyFinished = microphoneFinished
+        let firstTime = firstAudioTime
+        let lastTime = lastMediaTime
         if !alreadyFinished {
             microphoneFinished = true
             Stderr.print("Finishing microphone track after \(String(format: "%.2f", elapsed)) seconds")
@@ -150,11 +156,27 @@ final class AudioWriter: @unchecked Sendable {
         finishLock.unlock()
 
         if !alreadyFinished && bothFinished {
-            finalizeWriter(elapsed: elapsed)
+            finalizeWriter(elapsed: elapsed, firstTime: firstTime, lastTime: lastTime)
         }
     }
 
-    private func finalizeWriter(elapsed: Double) {
+    private func finalizeWriter(elapsed: Double, firstTime: CMTime?, lastTime: CMTime?) {
+        // End the session at the adjusted last media time (relative to session start at .zero)
+        if let firstTime = firstTime, let lastTime = lastTime {
+            let adjustedEndTime = CMTimeSubtract(lastTime, firstTime)
+            writer.endSession(atSourceTime: adjustedEndTime)
+        }
+
+        // Check writer status before calling finishWriting
+        guard writer.status == .writing else {
+            Stderr.print("audio writer not in writing state (status: \(writer.status.rawValue)), calling onComplete directly")
+            if writer.status == .failed {
+                Stderr.print("audio writer error: \(String(describing: writer.error))")
+            }
+            onComplete?()
+            return
+        }
+
         writer.finishWriting { [weak self] in
             guard let self = self else { return }
             Stderr.print("wrote \(self.writer.outputURL.lastPathComponent) (\(String(format: "%.1f", elapsed)) seconds, 2 tracks)")
@@ -191,7 +213,7 @@ final class AudioWriter: @unchecked Sendable {
             } else {
                 elapsed = 0
             }
-            finalizeWriter(elapsed: elapsed)
+            finalizeWriter(elapsed: elapsed, firstTime: firstTime, lastTime: lastTime)
         }
     }
 

@@ -1,4 +1,4 @@
-import Foundation
+import Darwin
 
 /// Unbuffered stdout output
 enum Stdout {
