@@ -87,7 +87,8 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 - Classes use `@unchecked Sendable` with NSLock for thread safety
 - Factory method pattern for writer and output classes
 - One SCStream per display; audio attached to first display's stream only
-- Three completion modes: audio-driven, timer-driven, or indefinite (Ctrl-C)
+- Four completion modes: audio-driven, timer-driven, indefinite (Ctrl-C), or auto-restart on system interruption
+- **Auto-restart**: On error -3821 (system stopped stream due to low disk space), streams are automatically restarted up to 10 times while continuing to write to the same output files
 
 ## Dependencies
 
