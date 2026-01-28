@@ -54,11 +54,21 @@ sck-cli recording -l 60 --no-audio --mask 1Password --mask Messages
 - `<output>_<displayID>.mov` - HEVC video per display
 - `<output>.m4a` - Audio (2 tracks: system + microphone)
 
-**JSONL to stdout:**
+**JSONL to stdout** (one line per event):
 ```json
 {"displayID":1,"filename":"recording_1.mov","frameRate":1,"height":1080,"type":"display","width":1920,"x":0,"y":0}
-{"channels":1,"filename":"recording.m4a","sampleRate":48000,"tracks":[{"name":"system"},{"name":"microphone"}],"type":"audio"}
+{"channels":1,"filename":"recording.m4a","sampleRate":48000,"tracks":[{"deviceName":"MacBook Pro Speakers","deviceUID":"BuiltInSpeakerDevice","manufacturer":"Apple Inc.","name":"system","transportType":"built-in"},{"deviceName":"MacBook Pro Microphone","deviceUID":"BuiltInMicrophoneDevice","manufacturer":"Apple Inc.","name":"microphone","transportType":"built-in"}],"type":"audio"}
+{"reason":"completed","type":"stop"}
 ```
+
+**Stop event reasons:**
+
+| Reason | Description | Extra Fields |
+|--------|-------------|--------------|
+| `completed` | Duration elapsed or audio finished | - |
+| `device-change` | Audio device changed (for watchdog restart) | `inputDeviceChanged`, `outputDeviceChanged` |
+| `error` | Stream error occurred | `errorCode`, `errorDomain` |
+| `signal` | User interrupt (Ctrl-C) | - |
 
 ### Signal Handling
 
@@ -69,7 +79,7 @@ sck-cli recording -l 60 --no-audio --mask 1Password --mask Messages
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
+| 0 | Success (includes device-change for watchdog restart) |
 | 1 | Error |
 | 130 | Interrupted (SIGINT) |
 | 143 | Terminated (SIGTERM) |

@@ -48,7 +48,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 
 - **SCKShot.swift** - CLI entry point with ArgumentParser, display discovery, stream orchestration
 - **AudioWriter.swift** - Multi-track M4A writing with AVAssetWriter (system audio + microphone)
-- **AudioDeviceInfo.swift** - CoreAudio queries for default input device metadata
+- **AudioDeviceInfo.swift** - CoreAudio queries for default input and output device metadata
 - **AudioDeviceMonitor.swift** - CoreAudio property listeners for device change detection
 - **VideoWriter.swift** - HEVC hardware encoding to .mov with AVAssetWriter
 - **StreamOutput.swift** - SCStreamOutput protocol implementations for video and audio capture
