@@ -4,7 +4,7 @@
 import Foundation
 import CoreAudio
 
-/// Metadata about an audio input device
+/// Metadata about an audio device
 struct AudioDeviceMetadata {
     let deviceName: String?
     let deviceUID: String?
@@ -14,11 +14,20 @@ struct AudioDeviceMetadata {
 
 /// Queries CoreAudio for default input device information
 func getDefaultInputDeviceInfo() -> AudioDeviceMetadata? {
-    // Get the default input device ID
+    return getDeviceInfo(selector: kAudioHardwarePropertyDefaultInputDevice)
+}
+
+/// Queries CoreAudio for default output device information
+func getDefaultOutputDeviceInfo() -> AudioDeviceMetadata? {
+    return getDeviceInfo(selector: kAudioHardwarePropertyDefaultOutputDevice)
+}
+
+/// Queries CoreAudio for device information using the specified hardware property selector
+private func getDeviceInfo(selector: AudioObjectPropertySelector) -> AudioDeviceMetadata? {
     var deviceID = AudioDeviceID()
     var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
     var address = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mSelector: selector,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )

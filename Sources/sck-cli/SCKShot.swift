@@ -670,8 +670,9 @@ struct SCKShot: AsyncParsableCommand {
 
         // Output audio info if enabled
         if let audioPath = audioPath {
-            // System audio track has no device metadata (it's a software mix of all app audio)
-            var tracks = [AudioTrackInfo(name: "system")]
+            // System audio track includes output device metadata (useful for echo analysis)
+            let outputMetadata = getDefaultOutputDeviceInfo()
+            var tracks = [AudioTrackInfo(name: "system", deviceMetadata: outputMetadata)]
 
             // Microphone track includes device metadata from default input device
             if #available(macOS 15.0, *) {
