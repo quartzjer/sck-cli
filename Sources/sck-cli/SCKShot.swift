@@ -15,6 +15,9 @@ nonisolated(unsafe) private var globalAbortSemaphore: DispatchSemaphore?
 nonisolated(unsafe) private var signalReceived = false
 nonisolated(unsafe) private var receivedSignal: Int32 = 0
 nonisolated(unsafe) private var streamErrorOccurred = false
+nonisolated(unsafe) private var streamErrorCode: Int?
+nonisolated(unsafe) private var streamErrorDomain: String?
+nonisolated(unsafe) private var deviceChangeMonitor: AudioDeviceMonitor?
 
 // Restart configuration
 private let maxRestarts = 10
@@ -72,12 +75,23 @@ extension AudioTrackInfo {
     }
 }
 
+/// JSONL output for capture stop event
+struct StopInfo: Codable {
+    let type: String
+    let reason: String
+    let errorCode: Int?
+    let errorDomain: String?
+    let inputDeviceChanged: Bool?
+    let outputDeviceChanged: Bool?
+}
+
 /// Signals that can end or interrupt a capture session
 enum CaptureSignal {
-    case completion  // Duration elapsed or audio finished normally
-    case abort       // Unrecoverable error occurred
-    case restart     // Recoverable error (-3821), should restart streams
-    case userSignal  // User interrupt (Ctrl-C)
+    case completion     // Duration elapsed or audio finished normally
+    case abort          // Unrecoverable error occurred
+    case restart        // Recoverable error (-3821), should restart streams
+    case userSignal     // User interrupt (Ctrl-C)
+    case deviceChange   // Audio device changed, clean exit for watchdog restart
 }
 
 /// Delegate to monitor SCStream lifecycle and errors - signals restart or abort depending on error type
@@ -124,8 +138,10 @@ final class StreamDelegate: NSObject, SCStreamDelegate, @unchecked Sendable {
                 Stderr.print("[INFO] Display \(displayID) error details: \(error.localizedDescription)")
             }
         }
-        // Mark that a stream error occurred and signal abort
+        // Capture error details and signal abort
         streamErrorOccurred = true
+        streamErrorCode = code
+        streamErrorDomain = domain
         abortSemaphore.signal()
     }
 }
@@ -258,12 +274,26 @@ struct SCKShot: AsyncParsableCommand {
         // Main capture loop with restart support
         var restartCount = 0
         var currentStreams: [SCStream] = []
+        var captureStopReason: CaptureSignal = .completion
 
         captureLoop: while true {
             // Create fresh semaphores for each capture attempt
             let abortSemaphore = DispatchSemaphore(value: 0)
             let restartSemaphore = DispatchSemaphore(value: 0)
             globalAbortSemaphore = abortSemaphore
+
+            // Set up device change monitoring (only on first iteration, uses abort semaphore)
+            if restartCount == 0 && audio {
+                let monitor = AudioDeviceMonitor(semaphore: abortSemaphore, verbose: verbose)
+                if monitor.start() {
+                    deviceChangeMonitor = monitor
+                    if verbose {
+                        Stderr.print("[INFO] Audio device monitoring started")
+                    }
+                } else if verbose {
+                    Stderr.print("[WARNING] Audio device monitoring not available")
+                }
+            }
 
             // Create streams for all displays (reusing outputs)
             do {
@@ -327,6 +357,7 @@ struct SCKShot: AsyncParsableCommand {
             }
 
             // Handle the signal
+            captureStopReason = signal
             switch signal {
             case .completion:
                 // Normal completion - exit loop
@@ -338,6 +369,10 @@ struct SCKShot: AsyncParsableCommand {
 
             case .userSignal:
                 // User interrupted - exit loop
+                break captureLoop
+
+            case .deviceChange:
+                // Audio device changed - clean exit for watchdog restart
                 break captureLoop
 
             case .restart:
@@ -353,6 +388,10 @@ struct SCKShot: AsyncParsableCommand {
                 continue captureLoop
             }
         }
+
+        // Stop device monitoring
+        deviceChangeMonitor?.stop()
+        deviceChangeMonitor = nil
 
         // Finish audio writer (for graceful shutdown on signal)
         if let ao = audioOutput {
@@ -394,6 +433,9 @@ struct SCKShot: AsyncParsableCommand {
             Stderr.print("[INFO] Completed with \(restartCount) restart(s) due to system interruptions")
         }
 
+        // Output stop info as JSONL for parent processes
+        outputStopInfo(reason: captureStopReason)
+
         // Determine exit code based on what happened
         let exitCode: Int32
         if streamErrorOccurred || !videoWriteErrors.isEmpty {
@@ -403,10 +445,53 @@ struct SCKShot: AsyncParsableCommand {
             // Signal-triggered shutdown: exit with 128 + signal number (Unix convention)
             exitCode = 128 + receivedSignal
         } else {
-            // Normal completion (duration elapsed or audio finished) - even if restarts occurred
+            // Normal completion, device change, or other clean exit
             exitCode = 0
         }
         Darwin.exit(exitCode)
+    }
+
+    /// Outputs stop info as JSONL to stdout for parent processes
+    private func outputStopInfo(reason: CaptureSignal) {
+        let reasonString: String
+        var errorCode: Int? = nil
+        var errorDomain: String? = nil
+        var inputChanged: Bool? = nil
+        var outputChanged: Bool? = nil
+
+        switch reason {
+        case .completion:
+            reasonString = "completed"
+        case .abort:
+            reasonString = "error"
+            errorCode = streamErrorCode
+            errorDomain = streamErrorDomain
+        case .restart:
+            reasonString = "restart"
+        case .userSignal:
+            reasonString = "signal"
+        case .deviceChange:
+            reasonString = "device-change"
+            if let monitor = deviceChangeMonitor {
+                inputChanged = monitor.inputDeviceChanged ? true : nil
+                outputChanged = monitor.outputDeviceChanged ? true : nil
+            }
+        }
+
+        let info = StopInfo(
+            type: "stop",
+            reason: reasonString,
+            errorCode: errorCode,
+            errorDomain: errorDomain,
+            inputDeviceChanged: inputChanged,
+            outputDeviceChanged: outputChanged
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        if let data = try? encoder.encode(info), let json = String(data: data, encoding: .utf8) {
+            Stdout.print(json)
+        }
     }
 
     /// Creates SCStream instances for all displays, reusing existing outputs
@@ -527,9 +612,12 @@ struct SCKShot: AsyncParsableCommand {
             // Watch for abort signal
             DispatchQueue.global().async {
                 abortSemaphore.wait()
-                // Check if this was triggered by user signal or error
+                // Check what triggered the abort
                 if signalReceived {
                     result.setResult(.userSignal)
+                } else if let monitor = deviceChangeMonitor,
+                          monitor.inputDeviceChanged || monitor.outputDeviceChanged {
+                    result.setResult(.deviceChange)
                 } else {
                     result.setResult(.abort)
                 }

@@ -49,6 +49,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 - **SCKShot.swift** - CLI entry point with ArgumentParser, display discovery, stream orchestration
 - **AudioWriter.swift** - Multi-track M4A writing with AVAssetWriter (system audio + microphone)
 - **AudioDeviceInfo.swift** - CoreAudio queries for default input device metadata
+- **AudioDeviceMonitor.swift** - CoreAudio property listeners for device change detection
 - **VideoWriter.swift** - HEVC hardware encoding to .mov with AVAssetWriter
 - **StreamOutput.swift** - SCStreamOutput protocol implementations for video and audio capture
 - **WindowMask.swift** - Window detection and pixel buffer masking for confidential mode
@@ -72,7 +73,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
   - `--audio/--no-audio` - Enable/disable audio (default: enabled)
   - `--mask <app>` - App name(s) to mask with black rectangles (can specify multiple times)
   - `-v, --verbose` - Enable verbose logging
-- **Output**: JSONL to stdout (one line per display, one for audio); all logging to stderr
+- **Output**: JSONL to stdout (one line per display, one for audio, one for stop); all logging to stderr
 
 ## Permissions Required
 
@@ -88,8 +89,9 @@ These must be granted in System Settings > Privacy & Security before the tool ca
 - Classes use `@unchecked Sendable` with NSLock for thread safety
 - Factory method pattern for writer and output classes
 - One SCStream per display; audio attached to first display's stream only
-- Four completion modes: audio-driven, timer-driven, indefinite (Ctrl-C), or auto-restart on system interruption
+- Five completion modes: audio-driven, timer-driven, indefinite (Ctrl-C), auto-restart on system interruption, or device change
 - **Auto-restart**: On error -3821 (system stopped stream due to low disk space), streams are automatically restarted up to 10 times while continuing to write to the same output files
+- **Device change detection**: When default audio input or output device changes, capture stops cleanly (exit 0) with JSONL stop event indicating which device changed. Ideal for watchdog loops that restart on device changes.
 
 ## Dependencies
 
