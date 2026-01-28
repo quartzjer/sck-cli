@@ -48,6 +48,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 
 - **SCKShot.swift** - CLI entry point with ArgumentParser, display discovery, stream orchestration
 - **AudioWriter.swift** - Multi-track M4A writing with AVAssetWriter (system audio + microphone)
+- **AudioDeviceInfo.swift** - CoreAudio queries for default input device metadata
 - **VideoWriter.swift** - HEVC hardware encoding to .mov with AVAssetWriter
 - **StreamOutput.swift** - SCStreamOutput protocol implementations for video and audio capture
 - **WindowMask.swift** - Window detection and pixel buffer masking for confidential mode
@@ -60,7 +61,7 @@ The application is a modular Swift CLI tool organized into separate concerns:
 - **Video format**: HEVC in .mov container with NV12 pixel format, sRGB color space
 - **Video encoding**: Hardware HEVC (8 Mbps default bitrate, sparse keyframes)
 - **Audio format**: M4A with AAC codec (64 kbps per track, 48kHz, mono tracks)
-- **Frameworks used**: ScreenCaptureKit, AVFoundation, CoreMedia, ArgumentParser
+- **Frameworks used**: ScreenCaptureKit, AVFoundation, CoreMedia, CoreAudio, ArgumentParser
 - **Multi-display**: Captures all connected displays simultaneously
 - **Output files**:
   - `<base>_<displayID>.mov` - One HEVC video file per display

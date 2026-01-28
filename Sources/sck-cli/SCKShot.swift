@@ -56,6 +56,20 @@ struct AudioInfo: Codable {
 /// Audio track metadata
 struct AudioTrackInfo: Codable {
     let name: String
+    let deviceName: String?
+    let deviceUID: String?
+    let manufacturer: String?
+    let transportType: String?
+}
+
+extension AudioTrackInfo {
+    init(name: String, deviceMetadata: AudioDeviceMetadata? = nil) {
+        self.name = name
+        self.deviceName = deviceMetadata?.deviceName
+        self.deviceUID = deviceMetadata?.deviceUID
+        self.manufacturer = deviceMetadata?.manufacturer
+        self.transportType = deviceMetadata?.transportType
+    }
 }
 
 /// Signals that can end or interrupt a capture session
@@ -568,10 +582,15 @@ struct SCKShot: AsyncParsableCommand {
 
         // Output audio info if enabled
         if let audioPath = audioPath {
+            // System audio track has no device metadata (it's a software mix of all app audio)
             var tracks = [AudioTrackInfo(name: "system")]
+
+            // Microphone track includes device metadata from default input device
             if #available(macOS 15.0, *) {
-                tracks.append(AudioTrackInfo(name: "microphone"))
+                let micMetadata = getDefaultInputDeviceInfo()
+                tracks.append(AudioTrackInfo(name: "microphone", deviceMetadata: micMetadata))
             }
+
             let info = AudioInfo(
                 type: "audio",
                 tracks: tracks,
